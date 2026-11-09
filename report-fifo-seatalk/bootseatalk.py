@@ -15,7 +15,7 @@ SPREADSHEET_ID = "19ejea0roWLSroIskVg0a2Pr0dXcTjsm0zUxOwL8SQkI"
 SHEET_CONSULTA = "Consulta"
 SHEET_FILTRO = "Filtro"
 SHEET_HEADCOUNT = "Headcount"
-WEBHOOK_URL = os.environ.get("SEATALK_WEBHOOK_URL", "")  # no GitHub: secret SEATALK_WEBHOOK_URL
+WEBHOOK_URL = os.environ.get("SEATALK_WEBHOOK_URL", "")  # variável de ambiente SEATALK_WEBHOOK_URL
 LINK_RELATORIO = "https://docs.google.com/spreadsheets/d/19ejea0roWLSroIskVg0a2Pr0dXcTjsm0zUxOwL8SQkI/edit?gid=2113883777#gid=2113883777"
 CRED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "credencial.json")
 FUSO = ZoneInfo("America/Recife")

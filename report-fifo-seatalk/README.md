@@ -3,10 +3,8 @@
 Script Python que monta o **report diário de quebra de FIFO do Stage IN (SOC-PE4)** e envia ao grupo do
 Seatalk: uma mensagem de texto (TOs respected / not respected, target, fechamento, % por turno, lista das
 TOs quebradas, menções aos responsáveis) e uma **imagem** com os indicadores e o mapa de calor da semana.
-Roda todo dia pelo **GitHub Actions**.
 
-> O README original do projeto foi mantido em [`README.original.md`](README.original.md). Ele cita um
-> `SETUP_GITHUB_ACTION.md` que não existia na pasta original — as instruções de GitHub Actions estão aqui.
+> O README original do projeto foi mantido em [`README.original.md`](README.original.md).
 
 ## Estrutura dos arquivos
 
@@ -16,7 +14,6 @@ report-fifo-seatalk/
 ├── requirements.txt      gspread, google-auth, requests, playwright, tzdata
 ├── README.original.md    documentação anterior
 └── dados/                CSV das abas da planilha (headcount mascarado) + _resumo.csv
-../.github/workflows/daily-report.yml   agendamento (todo dia 11:00 UTC = 08:00 Recife)
 ```
 
 ## Fonte de dados
@@ -44,8 +41,8 @@ Planilha [Report FIFO Stage IN PE4](https://docs.google.com/spreadsheets/d/19eje
 
 | Onde | O quê |
 |---|---|
-| Secret `GOOGLE_CREDENTIALS` (GitHub) ou arquivo `credencial.json` (local) | conta de serviço com leitura na planilha |
-| Secret / variável `SEATALK_WEBHOOK_URL` | webhook do grupo no Seatalk (**não fica no código**) |
+| Arquivo `credencial.json` na pasta (ou variável `GOOGLE_CREDENTIALS` com o JSON) | conta de serviço com leitura na planilha |
+| Variável de ambiente `SEATALK_WEBHOOK_URL` | webhook do grupo no Seatalk (**não fica no código**) |
 | `bootseatalk.py` | `SPREADSHEET_ID`, `TARGET_PADRAO`, `MENCOES_TURNO`, `MENCOES_FYI`, `LINK_RELATORIO` |
 
 ## Como executar
@@ -74,10 +71,7 @@ Envio real (precisa do webhook):
 SEATALK_WEBHOOK_URL="https://openapi.seatalk.io/webhook/group/..." python bootseatalk.py
 ```
 
-No GitHub: **Actions → Daily FIFO Report → Run workflow** roda na hora; o agendamento é diário.
-
 ## Manutenção
 
-- **Mudar horário** → `cron` em `.github/workflows/daily-report.yml` (em UTC).
 - **Responsáveis por turno** → `MENCOES_TURNO`.
 - O envio é feito **uma vez só** (sem nova tentativa) para não duplicar mensagem no grupo.

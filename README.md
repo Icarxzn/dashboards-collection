@@ -15,7 +15,7 @@ rótulo da unidade no `CONFIG` do `Code.gs`.
 | 05 | **TO's Packing** | TOs em embalagem, tempo em packing; Report com farol e turnos | [README](dashboards/05-tos-packing/README.md) | ![](dashboards/05-tos-packing/preview-dashboard.png) |
 | 06 | **Produtividade de Sacas** | % de pacotes em saca por dia operacional/turno, hora a hora × planejado | [README](dashboards/06-produtividade-sacas/README.md) | ![](dashboards/06-produtividade-sacas/preview-dashboard.png) |
 | 07 | **FIFO Stage IN** | Quebra de FIFO no stage de entrada, ofensores × headcount (PE2 + PE4 num só painel) | [README](dashboards/07-fifo-stage-in/README.md) | ![](dashboards/07-fifo-stage-in/preview-dashboard.png) |
-| — | **Report FIFO no Seatalk** | Mensagem + imagem diária de quebra de FIFO (Python + GitHub Actions) | [README](report-fifo-seatalk/README.md) | — |
+| — | **Report FIFO no Seatalk** | Mensagem + imagem diária de quebra de FIFO (Python) | [README](report-fifo-seatalk/README.md) | — |
 
 > As imagens de preview usam **dados fictícios** (geradas por `tools/gerar_previews.py`).
 
@@ -54,7 +54,6 @@ dashboards-collection/
 │       └── dados/<unidade>/      ← CSV de cada aba da planilha (referência de estrutura)
 │           └── _resumo.csv       ← abas, nº de linhas/colunas e cabeçalhos
 ├── report-fifo-seatalk/          ← script Python do report diário no Seatalk
-├── .github/workflows/            ← agendamento do report (GitHub Actions)
 └── tools/
     ├── catalogo.py               ← catálogo de planilhas / projetos / implantações
     ├── exportar_planilhas.py     ← regera os CSVs de dados/
