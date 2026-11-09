@@ -121,22 +121,6 @@ clasp update-deployment <deploy_id> -d "descrição da mudança"
 > Editou direto no editor do Apps Script? Traga para o repositório com `clasp pull` dentro da pasta, para o
 > Git não ficar desatualizado.
 
-### Primeira publicação / mudança de dono
-
-Se um projeto for recriado ou passar para outra conta:
-1. Abra o projeto (link em `catalogo.py` → `URL_SCRIPT`), selecione a função **`aquecerCache`** e clique em
-   **Executar** → autorize (planilha + gatilhos). Sem isso, quem abre o web app recebe erro.
-2. **Implantar → Gerenciar implantações → editar → Nova versão**, "Executar como: Eu",
-   "Quem pode acessar: Qualquer pessoa em Shopee Mobile".
-
-### Continuidade (não depender de uma pessoa)
-
-Hoje as planilhas e os projetos pertencem a **hikaro.almeida@shopee.com**, e os web apps executam com
-essa conta. Recomendado:
-- mover as planilhas para um **Drive compartilhado da equipe** (os scripts vinculados vão junto), ou no mínimo
-  dar acesso de **Editor** a outra pessoa em cada planilha;
-- se o dono mudar, refazer os dois passos acima com a conta nova.
-
 ### Regerar CSVs e previews
 
 ```bash
