@@ -1,0 +1,7 @@
+﻿aba,arquivo,linhas_de_dados,colunas,cabecalho
+Consulta,Consulta.csv,6574,14,adjusted_date | mapping_item_number | staging_date | rank_in | stage_out_date | rank_out | fifo_status | turno | staging_area_id | staging_area_name | staging_group_id | group_name | operator_staging | operator_stage_out
+Colaboradore Ofensores,Colaboradore_Ofensores.csv,21,7,Colaboradores ofensores |  |  |  |  |  | 
+Dynamics,Dynamics.csv,30,21, | 10 | 9 | 8 | 7 | 6 | 5 | 4 | 3 | 2 | 1 |  |  |  |  |  |  |  |  |  | 
+Headcount,Headcount.csv,684,18,OPS ID | Matrícula | Nome | CPF | E-mail | Telefone | Gênero | Data Nascimento | Data Admissão | Data Desligamento | Status | Empresa | Setor | Cargo | Turno | Escala | Estação | Líder
+ABS,ABS.csv,903,3,OPS ID | Nome Completo | Turno
+Filtro,Filtro.csv,10,6,Turno | 08/11/2026 |  | Respected | Not Respected | %

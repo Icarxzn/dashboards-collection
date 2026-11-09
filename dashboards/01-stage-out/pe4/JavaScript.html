@@ -1,0 +1,498 @@
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  SERVER  (google.script.run -> Code.gs)
+// ═══════════════════════════════════════════════════════════════
+function gs(fn, ...args) {
+  return new Promise((resolve, reject) =>
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args));
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  SHEET STATE  (sacas por destino via aba Packed)
+// ═══════════════════════════════════════════════════════════════
+const sheet = {
+  byDest:  {},   // { '7743': { sacas: N, pedidos: N } }
+  total:   0,
+  loaded:  false,
+};
+
+// Quantas ruas disponíveis cada destino tem (sacas são por destino, não por rua)
+let ruasPorDest = {};
+
+function sacasForDest(destId) {
+  if (!sheet.loaded) return null;
+  const d = sheet.byDest[destId];
+  return d ? { sacas: d.sacas } : null;
+}
+
+// Retorna { sacas: N } para a rua só quando o destino tem uma única rua
+function sacasForRua(r) {
+  const { id } = parseDestId(r.to_destination);
+  if (ruasPorDest[id] !== 1) return null;
+  return sacasForDest(id);
+}
+
+async function loadSheetData() {
+  const badge     = document.getElementById('sheetBadge');
+  const badgeText = document.getElementById('sheetBadgeText');
+  try {
+    const data = JSON.parse(await gs('getCageData'));
+    if (data.error) throw new Error(data.error);
+
+    sheet.byDest = data.byDest || {};
+    sheet.total  = data.total  || 0;
+    sheet.loaded = true;
+
+    badge.className = 'sheet-badge ok';
+    const destCount = Object.keys(sheet.byDest).length;
+    badgeText.textContent = sheet.total.toLocaleString('pt-BR') + ' sacas · ' + destCount + ' destinos';
+
+    updateSacasStat();
+    if (groups.length > 0) { groups = buildGroups(availList); render(); if (reportVisivel()) renderStageReport(); }
+  } catch(e) {
+    console.warn('[sacas]', e.message || e);
+    sheet.loaded          = false;
+    badge.className       = 'sheet-badge err';
+    badgeText.textContent = 'Packed offline';
+    document.getElementById('sSacas').textContent    = '—';
+    document.getElementById('sSacasSub').textContent = 'aba Packed indisponível';
+  }
+}
+
+function updateSacasStat() {
+  const el  = document.getElementById('sSacas');
+  const sub = document.getElementById('sSacasSub');
+  if (sheet.loaded) {
+    el.classList.remove('loading');
+    el.textContent  = sheet.total.toLocaleString('pt-BR');
+    sub.textContent = Object.keys(sheet.byDest).length + ' destinos mapeados';
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+const parsePct = s => parseFloat(String(s||'0').replace('%','').trim()) || 0;
+
+function occColor(p) {
+  if (p >= 100) return 'var(--red)';
+  if (p >= 80)  return 'var(--yellow)';
+  if (p >= 40)  return 'var(--blue)';
+  return 'var(--green)';
+}
+
+function fmtDur(s) {
+  if (!s) return '—';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h${String(m).padStart(2,'0')}m` : `${m}m`;
+}
+
+function durClass(s) {
+  if (s > 86400) return 'crit';
+  if (s > 43200) return 'warn';
+  return '';
+}
+
+function parseDestId(to_destination) {
+  const m = (to_destination||'').match(/^\[(\d+)\](.*)/);
+  return m ? { id: m[1], name: m[2].trim() } : { id: '?', name: to_destination || '—' };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RUA DETAIL MODAL (dados da rua + sacas Packed do destino)
+// ═══════════════════════════════════════════════════════════════
+let ruaDetailActive = null;
+
+async function openRuaDetailModal(staging_area_id) {
+  ruaDetailActive = staging_area_id;
+  document.getElementById('toDetailModal').style.display = 'flex';
+  renderRuaDetailLoading(staging_area_id);
+  try {
+    const res = JSON.parse(await gs('getRuaDetail', staging_area_id));
+    if (ruaDetailActive !== staging_area_id) return;
+    if (res.error) renderRuaDetailError(staging_area_id, res.error);
+    else renderRuaDetailResult(staging_area_id, res);
+  } catch (e) {
+    if (ruaDetailActive !== staging_area_id) return;
+    renderRuaDetailError(staging_area_id, e.message || String(e));
+  }
+}
+
+function closeToDetailModal() {
+  document.getElementById('toDetailModal').style.display = 'none';
+  ruaDetailActive = null;
+}
+
+function ruaDetailHeader(staging_area_id, title, sub) {
+  return `<div class="to-modal-header">
+    <div>
+      <div class="to-modal-title">${title || staging_area_id}</div>
+      ${sub ? `<div class="to-modal-sub">${sub}</div>` : ''}
+    </div>
+    <button class="to-modal-close" onclick="closeToDetailModal()">✕</button>
+  </div>`;
+}
+
+function renderRuaDetailLoading(staging_area_id) {
+  document.getElementById('toDetailModalBox').innerHTML = `
+    ${ruaDetailHeader(staging_area_id)}
+    <div class="to-modal-body">
+      <div class="to-modal-empty">
+        <div class="emoji">⏳</div>
+        Buscando sacas desta rua na planilha...
+      </div>
+    </div>`;
+}
+
+function renderRuaDetailError(staging_area_id, error) {
+  document.getElementById('toDetailModalBox').innerHTML = `
+    ${ruaDetailHeader(staging_area_id)}
+    <div class="to-modal-body">
+      <div class="to-modal-empty">
+        <div class="emoji">❌</div>
+        Erro ao buscar essa rua na planilha.<br>
+        <span style="font-size:11px;color:var(--red)">${error || 'erro desconhecido'}</span>
+        <div><button class="to-modal-retry" onclick="openRuaDetailModal('${staging_area_id}')">Tentar de novo</button></div>
+      </div>
+    </div>`;
+}
+
+function renderRuaDetailResult(staging_area_id, data) {
+  const items = data.items || [];
+  const rows = items.map(it => {
+    const isTo = it.target_item_type === 2;
+    const typeBadge = isTo
+      ? `<span class="item-type-pill item-type-to">TO</span>`
+      : `<span class="item-type-pill item-type-cage">Gaiola</span>`;
+    return `<tr>
+      <td>${typeBadge}</td>
+      <td class="rua-name" style="font-size:11px">${it.target_item_number || '—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${it.to_receiver || '—'}</td>
+      <td style="font-family:monospace;font-size:11px;text-align:center">${it.quantity ?? '—'}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted)">${fmtScanTime(it.scan_time)}</td>
+    </tr>`;
+  }).join('');
+
+  const pct = parsePct(data.occupancy_percentage);
+  document.getElementById('toDetailModalBox').innerHTML = `
+    ${ruaDetailHeader(staging_area_id, data.staging_area_name || staging_area_id, `${staging_area_id} → ${data.to_destination || '—'}`)}
+    <div class="to-modal-body">
+      <div class="to-modal-kpis">
+        <div class="to-mkpi"><div class="to-mkpi-label">Gaiolas</div><div class="to-mkpi-val" style="color:var(--purple)">${data.cage_quantity ?? 0}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">TOs</div><div class="to-mkpi-val" style="color:var(--green)">${data.transport_order_quantity ?? 0}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">Capacidade</div><div class="to-mkpi-val">${data.capacity ?? '—'}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">Ocupação</div><div class="to-mkpi-val" style="color:${occColor(pct)}">${pct.toFixed(0)}%</div></div>
+      </div>
+      ${items.length ? `
+      <div class="sheet-hint" style="padding:0 0 8px">${items.length} sacas Packed para este destino</div>
+      <div class="to-modal-table-wrap">
+        <table class="to-modal-table">
+          <thead>
+            <tr>
+              <th>Tipo</th><th>Item</th><th>Receiver</th><th>Pedidos</th><th>Packed em</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>` : `<div class="to-modal-empty" style="padding:24px"><div class="emoji">📭</div>Nenhuma saca Packed para este destino.</div>`}
+    </div>`;
+}
+
+function fmtScanTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let groups    = [];
+let availList = [];
+let sortKey   = 'tempo';
+let sortAsc   = false;
+let lastAt    = null;
+
+// ═══════════════════════════════════════════════════════════════
+//  BUILD GROUPS
+// ═══════════════════════════════════════════════════════════════
+function buildGroups(list) {
+  const map = {};
+  list.forEach(r => {
+    const { id, name } = parseDestId(r.to_destination);
+    if (!map[id]) map[id] = { id, name, ruas: [] };
+    map[id].ruas.push(r);
+  });
+
+  ruasPorDest = {};
+  Object.values(map).forEach(g => { ruasPorDest[g.id] = g.ruas.length; });
+
+  return Object.values(map).map(g => {
+    const totGaiolas  = g.ruas.reduce((s, r) => s + (r.cage_quantity || 0), 0);
+    const totScuttles = g.ruas.reduce((s, r) => s + (r.transport_order_quantity || 0), 0);
+    const totCap      = g.ruas.reduce((s, r) => s + (r.capacity || 0), 0);
+    const totUsed     = g.ruas.reduce((s, r) => s + Math.round(parsePct(r.occupancy_percentage) / 100 * (r.capacity || 0)), 0);
+    const avgOcc      = totCap > 0 ? Math.round(totUsed / totCap * 100) : 0;
+    const maxDur      = Math.max(...g.ruas.map(r => r.staging_duration_time || 0), 0);
+
+    // Sacas do destino (aba Packed)
+    const sd       = sacasForDest(g.id);
+    const totSacas = sd ? sd.sacas : 0;
+
+    return { ...g, totGaiolas, totScuttles, avgOcc, maxDur, totSacas };
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SORT + FILTER
+// ═══════════════════════════════════════════════════════════════
+function sortedGroups(g) {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  let filtered = q
+    ? g.filter(d =>
+        d.name.toLowerCase().includes(q) ||
+        d.id.includes(q) ||
+        d.ruas.some(r => (r.staging_area_name||'').toLowerCase().includes(q))
+      )
+    : g.slice();
+
+  const keyMap = {
+    ruas:    'ruas',
+    gaiolas: 'totGaiolas',
+    scuttles:'totScuttles',
+    sacas:   'totSacas',
+    occ:     'avgOcc',
+    tempo:   'maxDur',
+  };
+  const key = keyMap[sortKey] || 'maxDur';
+
+  filtered.sort((a, b) => {
+    const av = key === 'ruas' ? a.ruas.length : a[key];
+    const bv = key === 'ruas' ? b.ruas.length : b[key];
+    return sortAsc ? av - bv : bv - av;
+  });
+
+  return filtered;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER CARD
+// ═══════════════════════════════════════════════════════════════
+function occBadgeClass(p) {
+  if (p >= 100) return 'badge-red';
+  if (p >= 80)  return 'badge-yellow';
+  if (p >= 40)  return 'badge-orange';
+  return 'badge-green';
+}
+
+// Máximo de sacas entre as ruas (para a barra proporcional)
+let maxSacasGlobal = 1;
+
+function renderCard(g, expanded) {
+  const oc = occBadgeClass(g.avgOcc);
+  const statusMap   = { 1:'s1', 2:'s2', 3:'s3' };
+  const statusLabel = { 1:'Aberto', 2:'Fechado', 3:'Em Carregamento' };
+
+  const ruasRows = g.ruas
+    .sort((a, b) => (b.staging_duration_time || 0) - (a.staging_duration_time || 0))
+    .map(r => {
+      const pct = parsePct(r.occupancy_percentage);
+      const col = occColor(pct);
+      const sc  = statusMap[r.staging_area_status] || '';
+      const sl  = statusLabel[r.staging_area_status] || r.staging_area_status;
+      const dc  = durClass(r.staging_duration_time);
+      const sd  = sacasForRua(r);
+      const sacasNum   = sd ? sd.sacas : null;
+      const maxRuaSacas= Math.max(maxSacasGlobal, 1);
+
+      const sacasCell = sacasNum !== null
+        ? `<div class="sacas-bar">
+             <div class="sacas-bg"><div class="sacas-fill" style="width:${Math.min((sacasNum/maxRuaSacas)*100,100).toFixed(0)}%"></div></div>
+             <span class="sacas-num">${sacasNum}</span>
+           </div>`
+        : `<span class="sacas-na" title="${sheet.loaded && g.totSacas ? 'Sacas são por destino — ' + g.totSacas + ' no total' : ''}">—</span>`;
+
+      return `<tr onclick="openRuaDetailModal('${r.staging_area_id}')" title="Ver sacas deste destino">
+        <td><span class="rua-name">${r.staging_area_name}</span></td>
+        <td><span class="status-pill ${sc}">${sl}</span></td>
+        <td style="text-align:center">${r.cage_quantity || 0}</td>
+        <td style="text-align:center">${r.transport_order_quantity || 0}</td>
+        <td>${sacasCell}</td>
+        <td>
+          <div class="mini-bar">
+            <div class="mini-bg"><div class="mini-fill" style="width:${Math.min(pct,100)}%;background:${col}"></div></div>
+            <span class="mini-pct" style="color:${col}">${pct.toFixed(0)}%</span>
+          </div>
+        </td>
+        <td><span class="dur ${dc}">${fmtDur(r.staging_duration_time)}</span></td>
+        <td style="color:var(--muted);font-size:11px">${(r.operator||'').replace(/@shopee\.com/,'').replace(/\[.*?\]/,'').trim() || '—'}</td>
+      </tr>`;
+    }).join('');
+
+  // Badge de sacas no cabeçalho do card (oculto quando o destino não tem sacas)
+  const sacasBadge = (sheet.loaded && g.totSacas > 0)
+    ? `<span class="badge badge-teal">${g.totSacas} sacas</span>`
+    : '';
+
+  const tableHint = !sheet.loaded
+    ? `<p class="sheet-hint">Sacas indisponível — aba Packed não carregou</p>`
+    : (g.ruas.length > 1 && g.totSacas > 0
+        ? `<p class="sheet-hint">${g.totSacas} sacas para o destino, divididas entre ${g.ruas.length} ruas</p>`
+        : '');
+
+  return `
+    <div class="dest-card${expanded ? ' expanded' : ''}" data-id="${g.id}">
+      <div class="dest-header">
+        <span class="dest-id">${g.id}</span>
+        <span class="dest-name" title="${g.name}">${g.name}</span>
+        <div class="dest-badges">
+          <span class="badge badge-blue">${g.ruas.length} rua${g.ruas.length !== 1 ? 's' : ''}</span>
+          <span class="badge badge-purple">${g.totGaiolas} gaiola${g.totGaiolas !== 1 ? 's' : ''}</span>
+          <span class="badge badge-green">${g.totScuttles} scuttle${g.totScuttles !== 1 ? 's' : ''}</span>
+          ${sacasBadge}
+          <span class="badge ${oc} occ-badge">${g.avgOcc}% ocp</span>
+        </div>
+        <span class="chevron">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </span>
+      </div>
+      <div class="ruas-wrap">
+        ${tableHint}
+        <table class="ruas-table">
+          <thead>
+            <tr>
+              <th>Rua</th>
+              <th>Status</th>
+              <th>Gaiolas</th>
+              <th>Scuttles</th>
+              <th>Sacas</th>
+              <th>Ocupação</th>
+              <th>Tempo</th>
+              <th>Operador</th>
+            </tr>
+          </thead>
+          <tbody>${ruasRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER ALL
+// ═══════════════════════════════════════════════════════════════
+const expandedIds = new Set();
+
+function render() {
+  const list      = sortedGroups(groups);
+  const container = document.getElementById('destList');
+  document.getElementById('countInfo').textContent = `${list.length} destinos`;
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty"><p>Nenhum destino encontrado.</p></div>';
+    return;
+  }
+
+  // Calcula máximo de sacas por rua para normalizar as barras
+  maxSacasGlobal = 1;
+  if (sheet.loaded) {
+    groups.forEach(g => g.ruas.forEach(r => {
+      const d = sacasForRua(r);
+      if (d && d.sacas > maxSacasGlobal) maxSacasGlobal = d.sacas;
+    }));
+  }
+
+  container.innerHTML = list.map(g => renderCard(g, expandedIds.has(g.id))).join('');
+
+  container.querySelectorAll('.dest-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const card = hdr.closest('.dest-card');
+      const id   = card.dataset.id;
+      if (expandedIds.has(id)) expandedIds.delete(id);
+      else expandedIds.add(id);
+      card.classList.toggle('expanded');
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UPDATE STATS
+// ═══════════════════════════════════════════════════════════════
+function updateStats(data) {
+  const list = data.list || [];
+  document.getElementById('sDest').textContent    = groups.length;
+  document.getElementById('sRuas').textContent    = list.length;
+  document.getElementById('sGaiolas').textContent = list.reduce((s, r) => s + (r.cage_quantity || 0), 0);
+  document.getElementById('sTOs').textContent     = list.reduce((s, r) => s + (r.transport_order_quantity || 0), 0);
+
+  if (sheet.loaded) updateSacasStat();
+
+  const t  = new Date(data.fetchedAt);
+  const ts = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const ds = t.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  document.getElementById('lastUpdated').textContent = ts;
+  document.getElementById('liveDot').className = 'live-dot on';
+  document.getElementById('metaTag').textContent =
+    `outbound_${ds.replace(/\//g, '-')} · ${list.length} ruas · ${ts}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LOAD STAGING DATA
+// ═══════════════════════════════════════════════════════════════
+async function loadData() {
+  try {
+    const data = JSON.parse(await gs('getStageOut'));
+    if (data.error) {
+      document.getElementById('destList').innerHTML =
+        `<div class="empty"><h2>Erro na planilha</h2><p>${data.error}</p></div>`;
+      return;
+    }
+    if (data.fetchedAt === lastAt) return;
+    lastAt = data.fetchedAt;
+
+    const allList = data.list || [];
+    availList = allList.some(r => 'staging_area_status' in r)
+      ? allList.filter(r => r.staging_area_status === 1 || r.staging_area_status === 3)
+      : allList;
+
+    groups = buildGroups(availList);
+    updateStats({ ...data, list: availList });
+    render();
+    if (typeof reportVisivel === 'function' && reportVisivel()) renderStageReport();
+  } catch(e) { console.warn('[stage-out]', e.message || e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SORT BUTTONS
+// ═══════════════════════════════════════════════════════════════
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.sort;
+    if (sortKey === s) sortAsc = !sortAsc;
+    else { sortKey = s; sortAsc = false; }
+
+    document.querySelectorAll('.sort-btn').forEach(b => {
+      b.classList.remove('active');
+      b.querySelector('.arrow').textContent = '↕';
+    });
+    btn.classList.add('active');
+    btn.querySelector('.arrow').textContent = sortAsc ? '↑' : '↓';
+    render();
+  });
+});
+
+document.getElementById('search').addEventListener('input', render);
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeToDetailModal(); });
+
+loadData();
+loadSheetData();
+
+setInterval(loadData,       15000);          // Stage OUT: a cada 15s
+setInterval(loadSheetData, 60 * 1000);       // Packed: a cada 1min (vem do cache)
+</script>

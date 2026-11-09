@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0D0D0D">
+<title>Produtividade de Sacas · <?= unidade ?></title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+  </div>
+  <div class="header-title">
+    <h1>Produtividade de Sacas · <?= unidade ?></h1>
+    <p>SPX EXPRESS &middot; % DE PACOTES EM SACA SOBRE O TOTAL EMBALADO &middot; POR DIA OPERACIONAL E TURNO</p>
+  </div>
+  <div class="header-right">
+    <span class="meta-tag" id="metaTag">&mdash;</span>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="lastUpdated">Aguardando...</span>
+    </div>
+  </div>
+</header>
+
+<div class="filter-bar">
+  <div class="filter-row">
+    <button class="chip" data-preset="today">Hoje</button>
+    <button class="chip" data-preset="yesterday">Ontem</button>
+    <button class="chip" data-preset="7d">Últimos 7 dias</button>
+    <button class="chip" data-preset="30d">Últimos 30 dias</button>
+    <button class="chip" data-preset="all">Tudo</button>
+    <span class="date-sep">|</span>
+    <input type="date" class="date-input" id="fromDate" aria-label="Data inicial">
+    <span class="date-sep">&rarr;</span>
+    <input type="date" class="date-input" id="toDate" aria-label="Data final">
+  </div>
+  <div class="filter-row">
+    <button class="chip active" data-turno="ALL">Turno: TOTAL</button>
+    <button class="chip chip-t1" data-turno="T1">T1 (06&ndash;14h)</button>
+    <button class="chip chip-t2" data-turno="T2">T2 (14&ndash;22h)</button>
+    <button class="chip chip-t3" data-turno="T3">T3 (22&ndash;06h)</button>
+    <span class="date-sep">|</span>
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" class="search-input" id="destinoFilter" placeholder="Filtrar por destino..." aria-label="Filtrar por destino">
+    </div>
+    <button class="clear-btn" id="clearFiltersBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      Limpar filtros
+    </button>
+    <span class="filter-summary" id="filterSummary"></span>
+  </div>
+</div>
+
+<div id="skeletonRoot" class="skeleton-row" aria-hidden="true">
+  <div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div>
+</div>
+
+<div class="content" id="content" style="display:none">
+  <div class="empty" id="emptyState" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+    <h2>Aguardando dados</h2>
+    <p id="emptyMsg">Nenhuma TO encontrada na aba <b>Saca management</b> da planilha.</p>
+  </div>
+
+  <div id="dashBody" style="display:none">
+    <!-- KPIs -->
+    <div class="section">
+      <div class="kpi-row">
+        <div class="kpi-card k-total" data-cls="ALL" tabindex="0" role="button" aria-label="Total de pacotes">
+          <div class="kpi-label">Total de Pacotes</div>
+          <div class="kpi-value" id="kpiTotal">0</div>
+          <div class="kpi-sub" id="kpiTotalSub">no período/turno selecionado</div>
+        </div>
+        <div class="kpi-card k-saca" data-cls="SACA" tabindex="0" role="button" aria-label="Pacotes em saca">
+          <div class="kpi-label">Pacotes em Saca</div>
+          <div class="kpi-value" id="kpiSaca">0</div>
+          <div class="kpi-sub" id="kpiSacaSub">classificados como saca</div>
+        </div>
+        <div class="kpi-card k-nao" data-cls="NAO_SACA" tabindex="0" role="button" aria-label="Pacotes em outro unitizador">
+          <div class="kpi-label">Pacotes em Outro Unitizador</div>
+          <div class="kpi-value" id="kpiNao">0</div>
+          <div class="kpi-sub" id="kpiNaoSub">demais tipos de embalagem</div>
+        </div>
+        <div class="kpi-card k-pct" data-cls="SACA" tabindex="0" role="button" aria-label="Percentual de sacas">
+          <div class="kpi-label">% Sacas</div>
+          <div class="kpi-value" id="kpiPct">0%</div>
+          <div class="kpi-sub">pacotes saca / (saca + outro unitizador)</div>
+        </div>
+        <div class="kpi-card k-pctn" data-cls="NAO_SACA" tabindex="0" role="button" aria-label="Percentual de outro unitizador">
+          <div class="kpi-label">% Outro Unitizador</div>
+          <div class="kpi-value" id="kpiPctN">0%</div>
+          <div class="kpi-sub">outro unitizador / (saca + outro unitizador)</div>
+        </div>
+      </div>
+      <div class="warn-banner" id="semClassBanner" data-cls="SEM_CLASS" style="display:none" tabindex="0" role="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <span><b id="semClassCount">0</b> sem classificação de tipo de unitizador (SPX não informou o campo) &mdash; <u>não entram</u> no cálculo de % Sacas. Clique para ver a lista.</span>
+      </div>
+    </div>
+
+    <!-- Turno comparison -->
+    <div class="section">
+      <div class="section-title">Comparação por Turno &mdash; clique numa linha para filtrar</div>
+      <div class="turno-table-wrap tbl-scroll-x">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>Turno</th><th>TOs</th><th>Total Pacotes</th><th>Pacotes Saca</th><th>Pacotes Não Saca</th><th>% Saca</th>
+          </tr></thead>
+          <tbody id="turnoTblBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Evolution -->
+    <div class="section">
+      <div class="section-title">Evolução por Dia Operacional</div>
+      <div class="evo-legend">
+        <span><i style="background:var(--orange)"></i> Pacotes em Saca</span>
+        <span><i style="background:#4b4b52"></i> Pacotes em Outro Unitizador</span>
+        <span><i style="background:var(--orange);border-radius:50%;width:8px;height:8px"></i> % Sacas (linha)</span>
+        <span style="color:var(--faint);margin-left:auto">clique numa barra para isolar o dia</span>
+      </div>
+      <div class="evo-chart-card">
+        <div class="evo-chart-wrap"><canvas id="evoCanvas" role="img" aria-label="Gráfico de evolução de pacotes em saca por dia operacional"></canvas></div>
+        <div class="evo-empty" id="evoEmpty" style="display:none">Sem dias no período selecionado.</div>
+      </div>
+    </div>
+
+    <!-- Hora a hora: Planejado x Realizado -->
+    <div class="section">
+      <div class="section-title">
+        <span>Produção Hora a Hora &mdash; Planejado &times; Realizado (Sacas)</span>
+        <span style="color:var(--faint);font-weight:600">meta: 70%</span>
+      </div>
+      <div class="filter-row" style="margin-bottom:12px">
+        <input type="date" class="date-input" id="hourlyDate" aria-label="Dia para visão hora a hora">
+        <span class="date-sep">|</span>
+        <span style="color:var(--faint);font-size:11px">Dia operacional: 06:00 do dia selecionado at&eacute; 05:59 do dia seguinte &middot; Planejado = soma da capacidade planejada de todas as esteiras naquela hora (aba "Planejamento") &middot; % = pacotes reais em saca / planejado</span>
+      </div>
+      <div class="evo-chart-card">
+        <div class="evo-chart-wrap"><canvas id="hourlyCanvas" role="img" aria-label="Gráfico hora a hora de planejado versus realizado de sacas"></canvas></div>
+      </div>
+      <div class="turno-table-wrap tbl-scroll-x" style="margin-top:14px">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>Hora</th><th>Planejado</th><th>Real Total</th><th>Eficiência</th><th>Real Sacas</th><th>% Sacas / Planejado</th>
+          </tr></thead>
+          <tbody id="hourlyTblBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Day x Turno matrix -->
+    <div class="section">
+      <div class="section-title">Dia Operacional &times; Turno &mdash; % Sacas por Pacotes (clique numa célula para filtrar)</div>
+      <div class="turno-table-wrap tbl-scroll-x">
+        <table class="data-tbl">
+          <thead><tr><th>Dia Operacional</th><th>T1</th><th>T2</th><th>T3</th><th>Total</th></tr></thead>
+          <tbody id="matrixTblBody"></tbody>
+        </table>
+      </div>
+      <div class="matrix-legend"><span>0%</span><div class="matrix-legend-bar"></div><span>100%</span></div>
+    </div>
+
+    <!-- Validation -->
+    <div class="section">
+      <div class="section-title">Validação da Regra</div>
+      <div class="val-grid" id="valGrid"></div>
+    </div>
+
+    <!-- All TOs -->
+    <div class="section">
+      <div class="section-title" style="border-bottom:none;margin-bottom:8px">
+        <span>TOs no Cálculo &mdash; Auditoria / Drill-down</span>
+      </div>
+      <div class="tbl-toolbar">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" class="search-input" id="tableSearch" placeholder="Buscar por TO, destino, operador..." aria-label="Buscar na tabela de auditoria">
+        </div>
+        <button class="chip active" data-clsfilter="ALL">Todas</button>
+        <button class="chip" data-clsfilter="SACA">Só Saca</button>
+        <button class="chip" data-clsfilter="NAO_SACA">Só Não Saca</button>
+        <button class="chip" data-clsfilter="SEM_CLASS">Só Sem Classificação</button>
+        <button class="export-btn" id="exportBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          CSV
+        </button>
+      </div>
+      <div class="tbl-scroll">
+        <table class="data-tbl">
+          <thead><tr>
+            <th>TO</th><th>Tipo</th><th>Pacotes</th><th>Status</th><th>Concluído (PACKED)</th>
+            <th>Dia Operacional</th><th>Turno</th><th>Destino</th><th>Estação</th>
+          </tr></thead>
+          <tbody id="allTblBody"></tbody>
+        </table>
+      </div>
+      <div class="tbl-count" id="tblCount"></div>
+    </div>
+  </div>
+</div>
+
+<script>const STATION_LABEL = <?= stationLabel ?>;</script>
+<?!= include('JavaScript'); ?>
+</body>
+</html>

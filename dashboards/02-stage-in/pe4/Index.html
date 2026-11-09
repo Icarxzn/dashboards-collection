@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbound Staging Area · <?= unidade ?></title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">📥</div>
+  <div class="header-title">
+    <h1>Inbound Staging Area · <?= unidade ?></h1>
+    <p>SPX EXPRESS · GERENCIAMENTO DE STAGING INBOUND</p>
+  </div>
+  <div class="header-right">
+    <span class="meta-tag" id="metaTag">—</span>
+    <button class="theme-btn" id="themeBtn" title="Alternar tema" onclick="toggleTheme()">☀️</button>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="lastUpdated">Aguardando...</span>
+    </div>
+  </div>
+</header>
+
+<div class="zone-tabs" id="zoneTabs"></div>
+
+<div id="operacionalView" style="display:none">
+  <div class="op-grid" id="opGrid"></div>
+</div>
+
+<div id="defaultView">
+<!-- KPIs -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Total TOs</div>
+    <div class="stat-value" id="sTOs" style="color:var(--accent)">—</div>
+    <div class="stat-sub">em staging agora</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Total Pacotes</div>
+    <div class="stat-value" id="sTotalPacotes" style="color:var(--purple)">—</div>
+    <div class="stat-sub">da aba Consulta</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Ruas Ativas</div>
+    <div class="stat-value" id="sRuas" style="color:var(--blue)">—</div>
+    <div class="stat-sub">com TOs alocados</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Maior Aging</div>
+    <div class="stat-value" id="sMaxAging" style="color:var(--red)">—</div>
+    <div class="stat-sub" id="sMaxAgingRua">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Média Aging</div>
+    <div class="stat-value" id="sAvgAging" style="color:var(--yellow)">—</div>
+    <div class="stat-sub">nas ruas ativas</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Média por TO</div>
+    <div class="stat-value" id="sAvgTO" style="color:var(--purple)">—</div>
+    <div class="stat-sub" id="sAvgTOSub">pacotes / TO</div>
+  </div>
+</div>
+
+<!-- Visão por Zona -->
+<div class="section" id="zonaSection" style="display:none">
+  <div class="section-label">Visão por Zona · Distribuição de Pacotes</div>
+  <div class="zone-cards" id="zoneCards"></div>
+  <div class="crosstab-wrap">
+    <table class="crosstab" id="crosstabTable"></table>
+  </div>
+</div>
+
+<!-- Visão por Perfil de Pacote -->
+<div class="section" id="perfilSection" style="display:none">
+  <div class="section-label">Visão por Perfil de Pacote</div>
+  <div id="perfilNoData" style="display:none;color:var(--muted);font-size:12px;padding:14px 0">
+    Esta zona não possui classificação de perfil de pacote (PP/P/M/G/Bulky) na planilha de origem.
+  </div>
+  <div class="zone-cards" id="perfilCards"></div>
+  <div class="crosstab-wrap">
+    <table class="crosstab" id="perfilCrosstabTable"></table>
+  </div>
+</div>
+
+<!-- Visão SPP · Todas as zonas (somente aba TODAS) -->
+<div id="sppView" style="display:none;padding:0 24px 14px">
+  <div class="section-label" style="margin-bottom:10px">Distribuição por SPP · Todas as Zonas</div>
+  <div style="display:grid;grid-template-columns:300px 1fr;gap:10px;align-items:start">
+    <div class="panel">
+      <div class="panel-title" style="display:flex;align-items:baseline;justify-content:space-between">
+        <span>Faixas de SPP</span>
+        <span style="font-size:10px;color:var(--muted);font-weight:400;letter-spacing:.3px">clique para filtrar</span>
+      </div>
+      <div id="sppDistrib"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">SPP Médio por Zona</div>
+      <div id="sppByZone"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Top 5 + Ocupação -->
+<div class="panel-row">
+  <div class="panel">
+    <div class="panel-title">Top 5 Ruas por Aging</div>
+    <table class="top5-table">
+      <thead>
+        <tr><th>Rua</th><th>Zona</th><th style="text-align:center">TOs</th><th style="text-align:center">Pacotes</th><th>Aging</th></tr>
+      </thead>
+      <tbody id="top5Body">
+        <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Ocupação por Zona</div>
+    <div id="occByZone">
+      <div style="color:var(--muted);text-align:center;padding:20px">—</div>
+    </div>
+  </div>
+
+  <div class="panel" style="display:flex;flex-direction:column">
+    <div class="panel-title">Turno Endereçou</div>
+    <div class="donut-wrap">
+      <div class="donut-svg-wrap">
+        <svg viewBox="0 0 100 100" width="128" height="128" id="turnoSvg" style="display:block">
+          <circle cx="50" cy="50" r="38" fill="none" stroke="var(--surface2)" stroke-width="17"/>
+        </svg>
+        <div class="donut-center">
+          <div class="donut-center-val" id="turnoTotal">—</div>
+          <div class="donut-center-lbl">pacotes</div>
+        </div>
+      </div>
+      <div id="turnoLegend" style="flex:1">
+        <div style="color:var(--muted);font-size:11px">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div><!-- end #defaultView -->
+
+<div id="volumosoView" style="display:none">
+  <!-- header row: título + botão copiar report -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:14px 24px 0">
+    <span style="font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Zona Volumoso</span>
+    <button id="btnCopyVolReport" onclick="copyVolReport()" style="display:flex;align-items:center;gap:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);color:var(--blue);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s">
+      📋 Copiar Report
+    </button>
+  </div>
+  <!-- 7 KPI cards -->
+  <div class="stats" style="grid-template-columns:repeat(7,1fr)">
+    <div class="stat"><div class="stat-label">Total TOs</div><div class="stat-value" id="vTOs" style="color:var(--accent)">—</div><div class="stat-sub">na VOLUMOSO</div></div>
+    <div class="stat"><div class="stat-label">Total Pacotes</div><div class="stat-value" id="vPacotes" style="color:var(--purple)">—</div><div class="stat-sub">soma geral</div></div>
+    <div class="stat clickable" id="statLt20"><div class="stat-label" id="lblLt30">TOs &lt; 30 pcts</div><div class="stat-value" id="vLt30" style="color:var(--accent)">—</div><div class="stat-sub">leve</div></div>
+    <div class="stat clickable" id="statEq20"><div class="stat-label" id="lblEq30">TOs = 30 pcts</div><div class="stat-value" id="vEq30" style="color:var(--blue)">—</div><div class="stat-sub">exato</div></div>
+    <div class="stat clickable" id="statGt20"><div class="stat-label" id="lblGt30">TOs &gt; 30 pcts</div><div class="stat-value" id="vGt30" style="color:var(--red)">—</div><div class="stat-sub">pesado</div></div>
+    <div class="stat"><div class="stat-label">Média por TO</div><div class="stat-value" id="vMedia" style="color:var(--yellow)">—</div><div class="stat-sub">pacotes/TO</div></div>
+    <div class="stat"><div class="stat-label">Maior TO</div><div class="stat-value" id="vMaior" style="color:var(--orange)">—</div><div class="stat-sub">pacotes</div></div>
+  </div>
+
+  <!-- 3 panels: Distribuição | Turno Ofensor | Top 5 -->
+  <div class="panel-row" style="grid-template-columns:1fr 1fr 1.5fr">
+    <div class="panel">
+      <div class="panel-title">Distribuição por Faixa de Pacotes</div>
+      <div id="vDistrib"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title" id="vTurnoOfensorTitle">Turno Ofensor</div>
+      <div id="vTurnoOfensor"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title" id="vTop5Title">Top 5 TOs com Maior Volume</div>
+      <div id="vTop5"></div>
+    </div>
+  </div>
+
+  <!-- Aging histogram (full width) -->
+  <div class="section">
+    <div class="section-label">Histograma por Faixa de Aging</div>
+    <div id="vAgingHist" style="padding:8px 0"></div>
+  </div>
+
+  <!-- Perfil de pacote · Zona Volumoso -->
+  <div class="section" id="vPerfilSection" style="display:none">
+    <div class="section-label">Perfil de Pacote · Zona Volumoso</div>
+    <div class="zone-cards" id="vPerfilCards"></div>
+  </div>
+</div>
+
+<div id="detailSection">
+<!-- Aging Criticality Panel -->
+<div id="agingCritSection" style="padding:0 24px 14px;display:none"></div>
+
+<!-- Detail table -->
+<div id="pctFilterBanner" style="display:none;margin:0 24px 8px" class="pct-filter-banner">
+  <span>🔍 Filtro ativo:</span>
+  <strong id="pctFilterLabel">—</strong>
+  <span id="pctFilterDesc" style="color:var(--muted)">— mostrando ruas com TOs correspondentes</span>
+  <button class="pct-filter-clear" onclick="clearFilter()">Limpar filtro</button>
+</div>
+<div class="section-header">
+  <span class="section-title">Detalhamento por Rua</span>
+  <span id="tableCount" style="font-size:11px;color:var(--muted)"></span>
+</div>
+<div class="table-toolbar">
+  <div class="search-wrap">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input class="search-input" id="tableSearch" type="text" placeholder="Buscar rua, operador...">
+  </div>
+  <div class="filter-pills" id="tableZonePills"></div>
+  <button class="aging-sort-btn desc" id="agingSortBtn">↓ Aging mais antigo</button>
+</div>
+<div class="table-wrap">
+  <div class="empty" id="emptyMsg">
+    <h2>⏳ Carregando planilha...</h2>
+    <p>Lendo as abas <b>Stage IN</b> e <b>Consulta</b>.</p>
+  </div>
+  <table class="main-table" id="mainTable" style="display:none">
+    <thead>
+      <tr>
+        <th data-col="area_name">Rua <span class="sa"></span></th>
+        <th data-col="staging_group_name">Zona <span class="sa"></span></th>
+        <th data-col="area_label">Área <span class="sa"></span></th>
+        <th data-col="to_quantity" style="text-align:center">TOs <span class="sa"></span></th>
+        <th data-col="pacotes" style="text-align:center">Pacotes <span class="sa"></span></th>
+        <th data-col="spp" style="text-align:center">SPP <span class="sa"></span></th>
+        <th data-col="capacity" style="text-align:center">Cap. <span class="sa"></span></th>
+        <th data-col="occupy_pct">Ocupação <span class="sa"></span></th>
+        <th data-col="staging_duration_time" class="sorted">Aging <span class="sa">↓</span></th>
+        <th data-col="operator">Operador <span class="sa"></span></th>
+      </tr>
+    </thead>
+    <tbody id="mainBody"></tbody>
+  </table>
+  <div class="pagination-bar" id="paginationBar" style="display:none">
+    <span class="pag-info" id="pagInfo"></span>
+    <div class="pag-pages" id="pagPages"></div>
+    <div class="pag-size">
+      Por página:
+      <select id="pagSizeSelect">
+        <option value="10" selected>10</option>
+        <option value="24">24</option>
+        <option value="50">50</option>
+      </select>
+    </div>
+  </div>
+</div>
+</div><!-- end #detailSection -->
+
+<script>const APP_URL = <?= appUrl ?>;</script>
+<?!= include('JavaScript'); ?>
+</body>
+</html>

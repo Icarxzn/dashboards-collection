@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Staging Area Dashboard · PE2</title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-icon">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+      <polyline points="2 17 12 22 22 17"/>
+      <polyline points="2 12 12 17 22 12"/>
+    </svg>
+  </div>
+  <div class="header-title">
+    <h1>Staging Area Dashboard · PE2</h1>
+    <p>SPX EXPRESS · ANÁLISE POR DESTINO</p>
+  </div>
+  <div class="header-right">
+    <span class="meta-tag" id="metaTag">—</span>
+    <div class="sheet-badge" id="sheetBadge" title="Sacas por destino (aba Packed da planilha)">
+      <div class="sheet-badge-dot"></div>
+      <span id="sheetBadgeText">Sacas...</span>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="lastUpdated">Aguardando...</span>
+    </div>
+  </div>
+</header>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="dash" onclick="showTab('dash')">📦 Dashboard</button>
+  <button class="tab-btn" data-tab="report" onclick="showTab('report')">📊 Report</button>
+</div>
+
+<div id="viewDash">
+<!-- Stats -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Destinos</div>
+    <div class="stat-value" id="sDest" style="color:var(--orange)">—</div>
+    <div class="stat-sub">TOs únicos</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Total de Ruas</div>
+    <div class="stat-value" id="sRuas" style="color:var(--blue)">—</div>
+    <div class="stat-sub">staging lanes</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Gaiolas</div>
+    <div class="stat-value" id="sGaiolas" style="color:var(--yellow)">—</div>
+    <div class="stat-sub">cages alocadas</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Scuttles</div>
+    <div class="stat-value" id="sTOs" style="color:var(--green)">—</div>
+    <div class="stat-sub">por staging lane</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Sacas</div>
+    <div class="stat-value loading" id="sSacas" style="color:var(--teal)">—</div>
+    <div class="stat-sub" id="sSacasSub">aguardando planilha</div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <div class="search-wrap">
+    <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+    </svg>
+    <input type="text" id="search" placeholder="Buscar por destino, ID ou rua...">
+  </div>
+  <div class="sort-btns">
+    <button class="sort-btn active" data-sort="tempo">Tempo <span class="arrow">↓</span></button>
+    <button class="sort-btn" data-sort="ruas">Ruas <span class="arrow">↕</span></button>
+    <button class="sort-btn" data-sort="gaiolas">Gaiolas <span class="arrow">↕</span></button>
+    <button class="sort-btn" data-sort="scuttles">Scuttles <span class="arrow">↕</span></button>
+    <button class="sort-btn" data-sort="sacas">Sacas <span class="arrow">↕</span></button>
+    <button class="sort-btn" data-sort="occ">Ocupação <span class="arrow">↕</span></button>
+  </div>
+  <span class="count-info" id="countInfo"></span>
+</div>
+
+<!-- List -->
+<div class="dest-list" id="destList">
+  <div class="empty">
+    <h2>Carregando planilha...</h2>
+    <p>Lendo a aba <b>Stage OUT</b>.</p>
+  </div>
+</div>
+
+</div>
+
+<!-- Report (Stage Out · análise operacional de ruas) -->
+<div id="viewReport" style="display:none">
+  <div class="sr-wrap" id="srWrap">
+    <div class="empty"><h2>Carregando...</h2><p>Lendo a aba <b>Stage OUT</b>.</p></div>
+  </div>
+</div>
+
+<!-- Modal de justificativa -->
+<div class="to-modal-overlay" id="justModal" style="display:none" onclick="if(event.target===this)closeJustModal()">
+  <div class="to-modal-box" id="justModalBox" style="max-width:560px"></div>
+</div>
+
+<!-- Rua Detail Modal -->
+<div class="to-modal-overlay" id="toDetailModal" style="display:none" onclick="if(event.target===this)closeToDetailModal()">
+  <div class="to-modal-box" id="toDetailModalBox"></div>
+</div>
+
+<?!= include('JavaScript'); ?>
+<?!= include('Report'); ?>
+</body>
+</html>

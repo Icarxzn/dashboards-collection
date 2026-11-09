@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Queue List · Inbound · <?= unidade ?></title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">🚛</div>
+  <div class="header-title">
+    <h1>Queue List · Inbound · <?= unidade ?></h1>
+    <p>SPX EXPRESS · MONITORAMENTO INBOUND · DOCAS E TEMPOS DE ESPERA</p>
+  </div>
+  <div class="header-right">
+    <span class="meta-tag" id="metaTag">—</span>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀️</button>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="lastUpdated">Aguardando...</span>
+    </div>
+  </div>
+</header>
+
+<!-- Status tabs -->
+<div class="zone-tabs" id="statusTabs">
+  <button class="zone-tab active"      data-filter="all">Todos <span class="tab-count" id="tc-all">—</span></button>
+  <button class="zone-tab t-pending"   data-filter="transit">Na Fila <span class="tab-count" id="tc-transit">—</span></button>
+  <button class="zone-tab t-occupied"  data-filter="unloading">Descarregando <span class="tab-count" id="tc-unloading">—</span></button>
+</div>
+
+<!-- KPIs -->
+<div class="stats">
+  <div class="stat"><div class="stat-label">Total Viagens</div><div class="stat-value" id="kTotal" style="color:var(--blue)">—</div><div class="stat-sub">LTs ativas</div></div>
+  <div class="stat"><div class="stat-label">Total Pacotes</div><div class="stat-value" id="kTotalPackages" style="color:var(--teal)">—</div><div class="stat-sub">pendentes</div></div>
+  <div class="stat"><div class="stat-label">Na Fila</div><div class="stat-value" id="kPending" style="color:var(--yellow)">—</div><div class="stat-sub">no pátio</div></div>
+  <div class="stat"><div class="stat-label">Descarregando</div><div class="stat-value" id="kOccupied" style="color:var(--green)">—</div><div class="stat-sub">na doca</div></div>
+  <div class="stat"><div class="stat-label">Pendente na Fila</div><div class="stat-value" id="kAssigned" style="color:var(--purple)">—</div><div class="stat-sub">aguardando doca</div></div>
+  <div class="stat"><div class="stat-label">Em Espera</div><div class="stat-value" id="kHold" style="color:var(--orange)">—</div><div class="stat-sub">on-hold</div></div>
+  <div class="stat"><div class="stat-label">Maior Espera</div><div class="stat-value" id="kMaxWait" style="color:var(--red)">—</div><div class="stat-sub" id="kMaxWaitSub">—</div></div>
+</div>
+
+<!-- Toolbar -->
+<div class="table-toolbar">
+  <div class="search-wrap">
+    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input class="search-input" id="tableSearch" type="text" placeholder="Buscar motorista, placa, agência, trip...">
+  </div>
+  <button class="wait-sort-btn desc" id="waitSortBtn">↓ Maior espera</button>
+  <span class="table-count" id="tableCount"></span>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <div class="empty" id="emptyMsg">
+    <h2>⏳ Carregando planilha...</h2>
+    <p>Lendo a aba <b>Inbound Queue List]</b>.</p>
+  </div>
+  <table class="main-table" id="mainTable" style="display:none">
+    <thead>
+      <tr>
+        <th data-col="vehicle_number">Placa <span class="sa"></span></th>
+        <th data-col="trip_vehicles">Veículo <span class="sa"></span></th>
+        <th data-col="lh_trip_number">Número do LH <span class="sa"></span></th>
+        <th data-col="trip_origin">Origem da LT <span class="sa"></span></th>
+        <th data-col="trip_eta">ETA <span class="sa"></span></th>
+        <th data-col="trip_arrived" class="sorted">Tempo desde a Chegada <span class="sa">↓</span></th>
+        <th data-col="waiting_time">Tempo de Espera <span class="sa"></span></th>
+        <th data-col="on_hold_time">Tempo em Espera <span class="sa"></span></th>
+        <th data-col="order_quantity" style="text-align:right">Pacotes Pendentes <span class="sa"></span></th>
+        <th data-col="driver_name">Nome do Motorista <span class="sa"></span></th>
+        <th data-col="assigned_dock_name">Doca Atribuída <span class="sa"></span></th>
+        <th data-col="occupied_dock_name">Doca Ocupada <span class="sa"></span></th>
+        <th data-col="lh_status">Status Linehaul <span class="sa"></span></th>
+        <th data-col="queue_status">Status Queue <span class="sa"></span></th>
+      </tr>
+    </thead>
+    <tbody id="mainBody"></tbody>
+  </table>
+  <div class="pagination-bar" id="paginationBar" style="display:none">
+    <span class="pag-info" id="pagInfo"></span>
+    <div class="pag-pages" id="pagPages"></div>
+    <div class="pag-size">
+      Por página:
+      <select id="pagSizeSelect">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="0">Todas</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- Trip Detail Modal -->
+<div class="modal-overlay" id="tripModal" style="display:none" onclick="if(event.target===this)closeTripModal()">
+  <div class="modal-box" id="tripModalBox"></div>
+</div>
+
+<?!= include('JavaScript'); ?>
+</body>
+</html>

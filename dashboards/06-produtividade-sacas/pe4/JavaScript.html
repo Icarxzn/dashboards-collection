@@ -1,0 +1,701 @@
+<script>
+// ── Server (google.script.run -> Code.gs) ──────────────────────────────────
+function gs(fn, ...args) {
+  return new Promise((resolve, reject) =>
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args));
+}
+
+// ── Regra de dia operacional / turno (06:00–05:59:59) ───────────────────────
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function operationalDayKey(ts) {
+  const shifted = new Date(ts * 1000 - 6 * 3600 * 1000);
+  return `${shifted.getFullYear()}-${pad2(shifted.getMonth() + 1)}-${pad2(shifted.getDate())}`;
+}
+function turnoOf(ts) {
+  const h = new Date(ts * 1000).getHours();
+  if (h >= 6  && h < 14) return 'T1';
+  if (h >= 14 && h < 22) return 'T2';
+  return 'T3';
+}
+function dayKeyOffset(key, offsetDays) {
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + offsetDays);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
+function fmtDayShort(key) {
+  const [y, m, d] = key.split('-');
+  return `${d}/${m}`;
+}
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+function classify(pack_name) {
+  const n = (pack_name || '').trim().toLowerCase();
+  if (!n) return 'SEM_CLASS';
+  return n === 'saca' ? 'SACA' : 'NAO_SACA';
+}
+function todayOpKey() { return operationalDayKey(Math.floor(Date.now() / 1000)); }
+
+// ── State ────────────────────────────────────────────────────────────────
+let rawList   = [];   // registros crus vindos da planilha (deduplicados por to_number)
+let enriched  = [];   // + dayKey, turno, cls
+let lastAt    = null;
+let firstLoadDone = false;
+
+const filters = {
+  from: dayKeyOffset(todayOpKey(), -6),
+  to:   todayOpKey(),
+  turno: 'ALL',       // ALL | T1 | T2 | T3
+  destino: '',
+  kpiCls: 'ALL',      // filtro disparado ao clicar num KPI/turno-linha — afeta a tabela de auditoria
+  matrixDay: null,    // dia isolado ao clicar na matriz (combinado com turno)
+};
+
+// ── Carga de dados (aba "Saca management", via cache do servidor) ───────────
+async function loadData() {
+  try {
+    const data = JSON.parse(await gs('getSacasHistory'));
+    if (data.error) {
+      document.getElementById('emptyMsg').textContent = 'Erro na planilha: ' + data.error;
+      document.getElementById('emptyState').style.display = '';
+      return;
+    }
+    if (data.fetchedAt === lastAt) return;
+    lastAt = data.fetchedAt;
+    // O servidor manda a lista compactada: [to_number, iDestino, pacotes, iUnitizador, complete_time]
+    const dests = data.dests || [], tipos = data.tipos || [];
+    applyData({
+      fetchedAt: data.fetchedAt,
+      list: (data.list || []).map(r => ({
+        to_number: r[0],
+        dest_station_name: dests[r[1]] || '',
+        quantity: r[2],
+        pack_name: tipos[r[3]] || '',
+        complete_time: r[4],
+        status: 'Packed',
+      })),
+    });
+  } catch (e) { console.warn('[sacas]', e.message || e); /* mantém última tela renderizada */ }
+  finally {
+    if (!firstLoadDone) {
+      firstLoadDone = true;
+      document.getElementById('skeletonRoot').style.display = 'none';
+      document.getElementById('content').style.display = '';
+    }
+  }
+}
+
+function applyData(data) {
+  // Dedup defensivo por to_number — ver painel de Validação, que reporta duplicados
+  // encontrados para auditoria.
+  const seen = new Map();
+  let dupCount = 0;
+  (data.list || []).forEach(r => {
+    if (!r || !r.to_number) return;
+    if (seen.has(r.to_number)) { dupCount++; return; }
+    seen.set(r.to_number, r);
+  });
+  rawList = [...seen.values()];
+  window.__dupCount = dupCount;
+
+  // Só entram no cálculo TOs com timestamp de conclusão válido (> 0)
+  const invalid = rawList.filter(r => !(r.complete_time > 0)).length;
+  window.__invalidCount = invalid;
+
+  enriched = rawList
+    .filter(r => r.complete_time > 0)
+    .map(r => ({
+      ...r,
+      dayKey: operationalDayKey(r.complete_time),
+      turno:  turnoOf(r.complete_time),
+      cls:    classify(r.pack_name),
+    }));
+
+  document.getElementById('emptyState').style.display = enriched.length ? 'none' : '';
+  document.getElementById('dashBody').style.display    = enriched.length ? '' : 'none';
+  if (!enriched.length) return;
+
+  const t  = new Date(data.fetchedAt);
+  const ts = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  document.getElementById('lastUpdated').textContent = ts;
+  document.getElementById('liveDot').className       = 'live-dot on';
+  document.getElementById('metaTag').textContent     = `${STATION_LABEL} · ${enriched.length} TOs no histórico · ${ts}`;
+
+  render();
+  renderHourly();
+}
+
+// ── Pipeline de filtro ───────────────────────────────────────────────────
+function inRange(dayKey) {
+  if (filters.from && dayKey < filters.from) return false;
+  if (filters.to   && dayKey > filters.to)   return false;
+  return true;
+}
+
+function baseFiltered() {
+  const destino = filters.destino.trim().toLowerCase();
+  return enriched.filter(r => {
+    if (filters.matrixDay) { if (r.dayKey !== filters.matrixDay) return false; }
+    else if (!inRange(r.dayKey)) return false;
+    if (filters.turno !== 'ALL' && r.turno !== filters.turno) return false;
+    if (destino && !(r.dest_station_name || '').toLowerCase().includes(destino)) return false;
+    return true;
+  });
+}
+
+// A métrica de negócio é sobre PACOTES dentro do unitizador, não sobre contagem de TOs
+// (uma TO pode carregar dezenas de pacotes num único saco/carrinho) — ex.: 20.000 pacotes
+// no período, 15.000 em saca = 75% de sacas, mesmo que o número de TOs saca/não-saca seja
+// bem diferente disso. Contagem de TOs é mantida como informação secundária (tos/tosSaca/
+// tosNao/tosSem), útil operacionalmente, mas nunca entra no cálculo de %.
+function aggregate(list) {
+  let saca = 0, nao = 0, sem = 0, pac = 0;
+  let tosSaca = 0, tosNao = 0, tosSem = 0;
+  list.forEach(r => {
+    const q = r.quantity || 0;
+    pac += q;
+    if (r.cls === 'SACA')          { saca += q; tosSaca++; }
+    else if (r.cls === 'NAO_SACA') { nao  += q; tosNao++;  }
+    else                            { sem  += q; tosSem++;  }
+  });
+  const denom = saca + nao;
+  return {
+    pac, saca, nao, sem,
+    tos: list.length, tosSaca, tosNao, tosSem,
+    pctSaca: denom ? (saca / denom * 100) : 0,
+    pctNao:  denom ? (nao  / denom * 100) : 0,
+  };
+}
+
+// ── Acessibilidade: torna elementos data-clickable/matrix-cell operáveis via teclado ──
+function makeKeyboardClickable(root) {
+  root.querySelectorAll('[data-clickable], .matrix-cell:not(.empty-cell)').forEach(el => {
+    if (el.dataset.kbdReady) return;
+    el.dataset.kbdReady = '1';
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+  });
+}
+
+// ── Render ───────────────────────────────────────────────────────────────
+function render() {
+  const scoped = baseFiltered();
+  const agg    = aggregate(scoped);
+
+  document.getElementById('kpiTotal').textContent = agg.pac.toLocaleString('pt-BR');
+  document.getElementById('kpiTotalSub').textContent = `${agg.tos.toLocaleString('pt-BR')} TOs no período/turno`;
+  document.getElementById('kpiSaca').textContent  = agg.saca.toLocaleString('pt-BR');
+  document.getElementById('kpiSacaSub').textContent = `${agg.tosSaca.toLocaleString('pt-BR')} TOs classificadas como saca`;
+  document.getElementById('kpiNao').textContent   = agg.nao.toLocaleString('pt-BR');
+  document.getElementById('kpiNaoSub').textContent = `${agg.tosNao.toLocaleString('pt-BR')} TOs com outro tipo`;
+  document.getElementById('kpiPct').textContent   = agg.pctSaca.toFixed(1) + '%';
+  document.getElementById('kpiPctN').textContent  = agg.pctNao.toFixed(1) + '%';
+
+  const banner = document.getElementById('semClassBanner');
+  if (agg.sem > 0) {
+    banner.style.display = 'flex';
+    document.getElementById('semClassCount').textContent =
+      `${agg.sem.toLocaleString('pt-BR')} pacotes (${agg.tosSem.toLocaleString('pt-BR')} TOs)`;
+  } else banner.style.display = 'none';
+
+  document.querySelectorAll('.kpi-card[data-cls]').forEach(el => {
+    el.classList.toggle('kpi-active', filters.kpiCls === el.dataset.cls);
+  });
+  banner.classList.toggle('kpi-active', filters.kpiCls === 'SEM_CLASS');
+
+  renderTurnoTable(scoped);
+  renderEvolution();
+  renderMatrix();
+  renderValidation(scoped, agg);
+  renderAllTable(scoped);
+  renderFilterSummary();
+}
+
+function renderTurnoTable(scoped) {
+  const turnos = ['T1', 'T2', 'T3'];
+  const rows = turnos.map(tk => {
+    const list = scoped.filter(r => r.turno === tk);
+    const a = aggregate(list);
+    const active = filters.turno === tk;
+    return `<tr data-clickable class="${active ? 'row-active' : ''}" onclick="setTurnoFilter('${tk}')">
+      <td><span class="turno-pill ${tk.toLowerCase()}">${tk}</span></td>
+      <td class="mono">${a.tos}</td>
+      <td class="mono">${a.pac}</td>
+      <td class="mono">${a.saca}</td>
+      <td class="mono">${a.nao}</td>
+      <td class="pct-cell">${a.pctSaca.toFixed(1)}%<span class="pct-bar-wrap"><span class="pct-bar" style="width:${Math.min(100,a.pctSaca)}%"></span></span></td>
+    </tr>`;
+  }).join('');
+  const totalAgg = aggregate(scoped);
+  const totalRow = `<tr class="row-total" data-clickable onclick="setTurnoFilter('ALL')">
+    <td>TOTAL</td><td class="mono">${totalAgg.tos}</td><td class="mono">${totalAgg.pac}</td><td class="mono">${totalAgg.saca}</td>
+    <td class="mono">${totalAgg.nao}</td>
+    <td class="pct-cell">${totalAgg.pctSaca.toFixed(1)}%<span class="pct-bar-wrap"><span class="pct-bar" style="width:${Math.min(100,totalAgg.pctSaca)}%"></span></span></td>
+  </tr>`;
+  const tbody = document.getElementById('turnoTblBody');
+  tbody.innerHTML = rows + totalRow;
+  makeKeyboardClickable(tbody);
+}
+
+function daysInWindow() {
+  // Quando um dia foi isolado via matriz, mostra só ele; senão, todo o range do/até.
+  if (filters.matrixDay) return [filters.matrixDay];
+  const days = [...new Set(enriched.filter(r => inRange(r.dayKey)).map(r => r.dayKey))].sort();
+  return days;
+}
+
+// ── Gráfico de evolução (Chart.js) ──────────────────────────────────────
+let evoChart = null;
+function ensureEvoChart() {
+  if (evoChart) return evoChart;
+  const ctx = document.getElementById('evoCanvas').getContext('2d');
+  evoChart = new Chart(ctx, {
+    data: {
+      labels: [],
+      datasets: [
+        { type: 'bar', label: 'Pacotes em Saca', data: [], backgroundColor: '#FA4C00', stack: 'vol', borderRadius: 4, maxBarThickness: 46, order: 2 },
+        { type: 'bar', label: 'Pacotes em Outro Unitizador', data: [], backgroundColor: '#4b4b52', stack: 'vol', borderRadius: 4, maxBarThickness: 46, order: 2 },
+        { type: 'line', label: '% Sacas', data: [], yAxisID: 'y1', borderColor: '#FA4C00', backgroundColor: '#FA4C00',
+          tension: .35, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#0D0D0D', pointBorderColor: '#FA4C00',
+          pointBorderWidth: 2, borderWidth: 2, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      onClick(evt, _els, chart) {
+        const pts = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+        if (pts.length) { const dk = chart.$dayKeys[pts[0].index]; if (dk) isolateDay(dk); }
+      },
+      onHover(evt, _els, chart) { evt.native.target.style.cursor = 'pointer'; },
+      plugins: {
+        legend: { display: false },
+        datalabels: { display: false },
+        tooltip: {
+          backgroundColor: '#1A1A1C', borderColor: '#2A2A2C', borderWidth: 1,
+          titleColor: '#F5F5F6', bodyColor: '#BFBFC3', padding: 11, cornerRadius: 8,
+          titleFont: { family: "'Fira Sans',sans-serif", weight: '700', size: 12 },
+          bodyFont: { family: "'Fira Code',monospace", size: 11.5 },
+          callbacks: {
+            label(item) {
+              if (item.dataset.label === '% Sacas') return `% Sacas: ${item.parsed.y.toFixed(1)}%`;
+              return `${item.dataset.label}: ${item.parsed.y.toLocaleString('pt-BR')} pacotes`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: '#96969b', font: { family: "'Fira Sans',sans-serif", size: 10.5 } } },
+        y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(255,255,255,.05)' },
+             ticks: { color: '#96969b', font: { family: "'Fira Code',monospace", size: 10 } } },
+        y1: { position: 'right', min: 0, max: 100, grid: { display: false },
+              ticks: { color: '#FA4C00', font: { family: "'Fira Code',monospace", size: 10 }, callback: v => v + '%' } },
+      },
+      animation: { duration: 320, easing: 'easeOutQuint' },
+    },
+  });
+  return evoChart;
+}
+
+function renderEvolution() {
+  const days = daysInWindow();
+  const wrap  = document.getElementById('evoCanvas').parentElement;
+  const empty = document.getElementById('evoEmpty');
+  if (!days.length) { wrap.style.display = 'none'; empty.style.display = 'block'; return; }
+  wrap.style.display = ''; empty.style.display = 'none';
+
+  const perDay = days.map(dk => {
+    const list = enriched.filter(r => r.dayKey === dk && (filters.turno === 'ALL' || r.turno === filters.turno) &&
+      (!filters.destino.trim() || (r.dest_station_name || '').toLowerCase().includes(filters.destino.trim().toLowerCase())));
+    return { dk, agg: aggregate(list) };
+  });
+
+  const chart = ensureEvoChart();
+  chart.$dayKeys = perDay.map(d => d.dk);
+  chart.data.labels = perDay.map(d => fmtDayShort(d.dk));
+  chart.data.datasets[0].data = perDay.map(d => d.agg.saca);
+  chart.data.datasets[1].data = perDay.map(d => d.agg.nao);
+  chart.data.datasets[2].data = perDay.map(d => Math.round(d.agg.pctSaca * 10) / 10);
+  const activeColors = perDay.map(d => filters.matrixDay === d.dk);
+  chart.data.datasets[0].backgroundColor = activeColors.map(a => a ? '#ff7a3d' : '#FA4C00');
+  chart.data.datasets[1].backgroundColor = activeColors.map(a => a ? '#6a6a70' : '#4b4b52');
+  chart.update();
+}
+
+// ── Produção Hora a Hora (Planejado × Realizado) ────────────────────────────
+// Diferente do resto do dashboard (que usa dia OPERACIONAL 06:00–05:59:59), essa visão
+// casa com a aba "Planejamento" da planilha, que é indexada por DATA/HORA de CALENDÁRIO.
+// Por isso usa funções de data/hora de calendário próprias (calDateDDMMYYYY/calHour),
+// em vez de operationalDayKey/turnoOf.
+let planejamento = [];
+const HOURLY_TARGET_PCT = 70;
+
+function calDateDDMMYYYY(ts) {
+  const d = new Date(ts * 1000);
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+function calHour(ts) { return new Date(ts * 1000).getHours(); }
+
+async function loadPlanejamento() {
+  try {
+    const data = JSON.parse(await gs('getSacasPlanejamento'));
+    if (data.error) return;
+    planejamento = data.list || [];
+    renderHourly();
+  } catch (e) { /* mantém última tela renderizada */ }
+}
+
+let hourlyChart = null;
+function ensureHourlyChart() {
+  if (hourlyChart) return hourlyChart;
+  const ctx = document.getElementById('hourlyCanvas').getContext('2d');
+  hourlyChart = new Chart(ctx, {
+    plugins: [ChartDataLabels],
+    data: {
+      labels: [],
+      datasets: [
+        { type: 'bar', label: 'Planejado', data: [], backgroundColor: 'rgba(191,191,195,.28)', borderRadius: 4, maxBarThickness: 28, order: 3, datalabels: { display: false } },
+        { type: 'bar', label: 'Real (Sacas)', data: [], backgroundColor: '#FA4C00', borderRadius: 4, maxBarThickness: 28, order: 2, datalabels: { display: false } },
+        { type: 'line', label: '% Sacas / Planejado', data: [], yAxisID: 'y1', borderColor: '#FA4C00', backgroundColor: '#FA4C00',
+          tension: .3, pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: '#0D0D0D', pointBorderColor: '#FA4C00',
+          pointBorderWidth: 2, borderWidth: 2, spanGaps: true, order: 1,
+          datalabels: {
+            display: true, align: 'top', anchor: 'end', offset: 6,
+            color: '#FA4C00', font: { family: "'Fira Code',monospace", size: 10, weight: '700' },
+            formatter: v => v == null ? '' : v.toFixed(1) + '%',
+          } },
+        { type: 'line', label: `Meta ${HOURLY_TARGET_PCT}%`, data: [], yAxisID: 'y1', borderColor: 'rgba(191,191,195,.5)',
+          borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5, order: 0, datalabels: { display: false } },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: 18 } },
+      plugins: {
+        legend: { labels: { color: '#96969b', font: { family: "'Fira Sans',sans-serif", size: 10.5 }, usePointStyle: true, boxWidth: 8 } },
+        tooltip: {
+          backgroundColor: '#1A1A1C', borderColor: '#2A2A2C', borderWidth: 1,
+          titleColor: '#F5F5F6', bodyColor: '#BFBFC3', padding: 11, cornerRadius: 8,
+          titleFont: { family: "'Fira Sans',sans-serif", weight: '700', size: 12 },
+          bodyFont: { family: "'Fira Code',monospace", size: 11.5 },
+          callbacks: {
+            label(item) {
+              if (item.dataset.label.startsWith('%') || item.dataset.label.startsWith('Meta')) {
+                return item.parsed.y == null ? `${item.dataset.label}: —` : `${item.dataset.label}: ${item.parsed.y.toFixed(1)}%`;
+              }
+              return item.parsed.y == null ? `${item.dataset.label}: —` : `${item.dataset.label}: ${item.parsed.y.toLocaleString('pt-BR')} pacotes`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#96969b', font: { family: "'Fira Sans',sans-serif", size: 10.5 } } },
+        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,.05)' },
+             ticks: { color: '#96969b', font: { family: "'Fira Code',monospace", size: 10 } } },
+        y1: { position: 'right', min: 0, suggestedMax: 100, grid: { display: false },
+              ticks: { color: '#FA4C00', font: { family: "'Fira Code',monospace", size: 10 }, callback: v => v + '%' } },
+      },
+      animation: { duration: 280 },
+    },
+  });
+  return hourlyChart;
+}
+
+// Monta a sequência de 24 horas do DIA OPERACIONAL (06:00 do dia escolhido até 05:59 do dia
+// seguinte). A aba "Planejamento" grava a cauda 00h-05h com a MESMA data do dia operacional
+// selecionado (ex.: "14/09" hora 0-5, Turno=T3); já os dados REAIS usam timestamp de verdade,
+// então 00h-05h da operacional "14/09" aconteceram de fato no calendário 15/09. Por isso cada
+// slot guarda duas chaves de data: realDateStr (timestamp real) e planDateStr (planilha).
+function operationalHourSlots(baseDateObj) {
+  const nextDateObj = new Date(baseDateObj.getFullYear(), baseDateObj.getMonth(), baseDateObj.getDate() + 1);
+  const baseStr = calDateStrOf(baseDateObj);
+  const nextStr = calDateStrOf(nextDateObj);
+  const slots = [];
+  for (let h = 6; h <= 23; h++) slots.push({ h, realDateStr: baseStr, planDateStr: baseStr });
+  for (let h = 0; h <= 5; h++)  slots.push({ h, realDateStr: nextStr, planDateStr: baseStr });
+  return slots;
+}
+function calDateStrOf(d) { return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`; }
+
+function renderHourly() {
+  const dateInput = document.getElementById('hourlyDate');
+  if (!dateInput || !dateInput.value) return;
+  const [y, m, dd] = dateInput.value.split('-').map(Number);
+  const slots = operationalHourSlots(new Date(y, m - 1, dd));
+  const slotIndex = new Map(slots.map((s, i) => [`${s.realDateStr}|${s.h}`, i]));
+
+  const realBySlot = slots.map(() => ({ pac: 0, saca: 0 }));
+  rawList.forEach(r => {
+    if (!(r.complete_time > 0)) return;
+    const idx = slotIndex.get(`${calDateDDMMYYYY(r.complete_time)}|${calHour(r.complete_time)}`);
+    if (idx === undefined) return;
+    const q = r.quantity || 0;
+    realBySlot[idx].pac += q;
+    if (classify(r.pack_name) === 'SACA') realBySlot[idx].saca += q;
+  });
+
+  const planMap = new Map(planejamento.map(p => [`${p.data}|${p.hora}`, p.planejadoGeral]));
+  const planBySlot = slots.map(s => planMap.get(`${s.planDateStr}|${s.h}`) ?? null);
+
+  const chart = ensureHourlyChart();
+  chart.data.labels = slots.map(s => `${pad2(s.h)}h`);
+  chart.data.datasets[0].data = planBySlot;
+  chart.data.datasets[1].data = realBySlot.map(r => r.saca);
+  chart.data.datasets[2].data = slots.map((s, i) => {
+    const plan = planBySlot[i];
+    return plan ? Math.round((realBySlot[i].saca / plan) * 1000) / 10 : null;
+  });
+  chart.data.datasets[3].data = slots.map(() => HOURLY_TARGET_PCT);
+  chart.update();
+
+  document.getElementById('hourlyTblBody').innerHTML = slots.map((s, i) => {
+    const plan = planBySlot[i];
+    const real = realBySlot[i];
+    const eficiencia = plan ? (real.pac / plan * 100) : null;
+    const pct = plan ? (real.saca / plan * 100) : null;
+    const pctColor = pct == null ? 'var(--faint)' : (pct >= HOURLY_TARGET_PCT ? 'var(--green)' : 'var(--red)');
+    const hourLabel = `${pad2(s.h)}h`;
+    return `<tr>
+      <td class="mono">${hourLabel}</td>
+      <td class="mono">${plan != null ? plan.toLocaleString('pt-BR') : '—'}</td>
+      <td class="mono">${real.pac.toLocaleString('pt-BR')}</td>
+      <td class="mono">${eficiencia != null ? eficiencia.toFixed(1) + '%' : '—'}</td>
+      <td class="mono" style="color:var(--orange)">${real.saca.toLocaleString('pt-BR')}</td>
+      <td class="pct-cell" style="color:${pctColor}">${pct != null ? pct.toFixed(1) + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function heatBg(pct, hasData) {
+  if (!hasData) return 'transparent';
+  const t = Math.max(0, Math.min(1, pct / 100));
+  const alpha = .1 + t * .38;
+  return `rgba(250,76,0,${alpha.toFixed(2)})`;
+}
+
+function renderMatrix() {
+  const days = filters.matrixDay
+    ? [filters.matrixDay]
+    : [...new Set(enriched.filter(r => inRange(r.dayKey)).map(r => r.dayKey))].sort();
+  const destino = filters.destino.trim().toLowerCase();
+  function pctFor(dk, turno) {
+    const list = enriched.filter(r => r.dayKey === dk &&
+      (turno === 'ALL' || r.turno === turno) &&
+      (!destino || (r.dest_station_name || '').toLowerCase().includes(destino)));
+    return aggregate(list);
+  }
+  const tbody = document.getElementById('matrixTblBody');
+  tbody.innerHTML = days.map(dk => {
+    const cells = ['T1', 'T2', 'T3', 'ALL'].map(tk => {
+      const a = pctFor(dk, tk);
+      const hasData = a.pac > 0;
+      const active = filters.matrixDay === dk && (filters.turno === tk || (tk === 'ALL' && filters.turno === 'ALL'));
+      const label = hasData ? a.pctSaca.toFixed(0) + '%' : '—';
+      const cls = `matrix-cell${active ? ' active' : ''}${hasData ? '' : ' empty-cell'}`;
+      const bg = heatBg(a.pctSaca, hasData);
+      return `<td class="${cls}" style="background:${bg}" title="${a.saca}/${a.saca + a.nao} pacotes (${a.tos} TOs)" onclick="clickMatrixCell('${dk}','${tk}')">${label}</td>`;
+    }).join('');
+    return `<tr><td>${fmtDayShort(dk)} <span style="color:var(--faint);font-size:10px">(${dk})</span></td>${cells}</tr>`;
+  }).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--faint)">Sem dias no período</td></tr>`;
+  makeKeyboardClickable(tbody);
+}
+
+const iconOk = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const iconErr = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+function renderValidation(scoped, agg) {
+  const grid   = document.getElementById('valGrid');
+  const sumOk  = (agg.saca + agg.nao + agg.sem) === agg.pac;
+  const outOfRange = enriched.length - baseFiltered().length; // apenas informativo: quantos ficaram fora do filtro atual
+  grid.innerHTML = `
+    <div class="val-card ${sumOk ? 'ok' : 'err'}">
+      <div class="vtitle">Total Pacotes = Saca + Não Saca + Sem Classificação</div>
+      <div class="vval">${sumOk ? iconOk : iconErr}${sumOk ? 'Consistente' : 'Inconsistente'}</div>
+      <div class="vsub">${agg.pac} = ${agg.saca} + ${agg.nao} + ${agg.sem}</div>
+    </div>
+    <div class="val-card ${window.__invalidCount ? 'err' : 'ok'}">
+      <div class="vtitle">TOs sem timestamp válido de PACKED</div>
+      <div class="vval">${window.__invalidCount || 0}</div>
+      <div class="vsub">excluídas do cálculo (não entram em nenhum dia/turno)</div>
+    </div>
+    <div class="val-card ${window.__dupCount ? 'err' : 'ok'}">
+      <div class="vtitle">TOs duplicadas detectadas</div>
+      <div class="vval">${window.__dupCount || 0}</div>
+      <div class="vsub">mesma TO recebida mais de uma vez (deduplicada por to_number)</div>
+    </div>
+    <div class="val-card ok">
+      <div class="vtitle">Fora do filtro atual</div>
+      <div class="vval">${outOfRange}</div>
+      <div class="vsub">TOs válidas no histórico, fora do período/turno/destino selecionado</div>
+    </div>
+  `;
+}
+
+function renderAllTable(scoped) {
+  const q = (document.getElementById('tableSearch').value || '').trim().toLowerCase();
+  let list = scoped;
+  if (filters.kpiCls !== 'ALL') list = list.filter(r => r.cls === filters.kpiCls);
+  if (q) {
+    list = list.filter(r => [r.to_number, r.dest_station_name, r.operator, r.pack_name]
+      .some(v => (v || '').toLowerCase().includes(q)));
+  }
+  list = [...list].sort((a, b) => b.complete_time - a.complete_time);
+
+  const pillOf = cls => cls === 'SACA' ? 'pill-saca' : cls === 'NAO_SACA' ? 'pill-nao' : 'pill-sem';
+  const labelOf = cls => cls === 'SACA' ? 'Saca' : cls === 'NAO_SACA' ? 'Não Saca' : 'Sem Classificação';
+
+  document.getElementById('allTblBody').innerHTML = list.slice(0, 3000).map(r => `
+    <tr>
+      <td class="mono" style="font-weight:700">${r.to_number}</td>
+      <td><span class="pill ${pillOf(r.cls)}">${labelOf(r.cls)}</span></td>
+      <td class="mono">${r.quantity || 0}</td>
+      <td style="color:var(--muted)">${r.status || '—'}</td>
+      <td class="mono" style="color:var(--muted)">${fmtDateTime(r.complete_time)}</td>
+      <td class="mono">${fmtDayShort(r.dayKey)}</td>
+      <td><span class="turno-pill ${r.turno.toLowerCase()}">${r.turno}</span></td>
+      <td style="color:var(--muted)">${r.dest_station_name || '—'}</td>
+      <td style="color:var(--faint)">${STATION_LABEL}</td>
+    </tr>`).join('');
+
+  const countLbl = document.getElementById('tblCount');
+  countLbl.textContent = list.length > 3000
+    ? `mostrando 3000 de ${list.length} TOs (refine os filtros para ver o restante)`
+    : `${list.length} TOs`;
+}
+
+function renderFilterSummary() {
+  const parts = [];
+  parts.push(filters.matrixDay ? fmtDayShort(filters.matrixDay) : `${fmtDayShort(filters.from)}–${fmtDayShort(filters.to)}`);
+  if (filters.turno !== 'ALL') parts.push(filters.turno);
+  if (filters.destino.trim()) parts.push(`destino: "${filters.destino.trim()}"`);
+  if (filters.kpiCls !== 'ALL') parts.push(filters.kpiCls === 'SEM_CLASS' ? 'sem classificação' : filters.kpiCls === 'SACA' ? 'só saca' : 'só não saca');
+  document.getElementById('filterSummary').innerHTML = `Mostrando: <b>${parts.join(' · ')}</b>`;
+}
+
+// ── Interações de filtro ─────────────────────────────────────────────────
+function setTurnoFilter(tk) {
+  filters.turno = tk;
+  document.querySelectorAll('.filter-row .chip[data-turno]').forEach(c => c.classList.toggle('active', c.dataset.turno === tk));
+  render();
+}
+function isolateDay(dk) {
+  filters.matrixDay = filters.matrixDay === dk ? null : dk;
+  render();
+}
+function clickMatrixCell(dk, tk) {
+  filters.matrixDay = dk;
+  filters.turno = tk;
+  document.querySelectorAll('.filter-row .chip[data-turno]').forEach(c => c.classList.toggle('active', c.dataset.turno === tk));
+  render();
+}
+function setKpiClsFilter(cls) {
+  filters.kpiCls = filters.kpiCls === cls ? 'ALL' : cls;
+  render();
+  document.getElementById('dashBody').scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+document.querySelectorAll('.kpi-card[data-cls]').forEach(el => {
+  el.addEventListener('click', () => setKpiClsFilter(el.dataset.cls));
+  el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } });
+});
+document.getElementById('semClassBanner').addEventListener('click', () => setKpiClsFilter('SEM_CLASS'));
+document.getElementById('semClassBanner').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } });
+document.querySelectorAll('.tbl-toolbar .chip[data-clsfilter]').forEach(el => {
+  el.addEventListener('click', () => {
+    filters.kpiCls = el.dataset.clsfilter;
+    document.querySelectorAll('.tbl-toolbar .chip[data-clsfilter]').forEach(c => c.classList.toggle('active', c === el));
+    render();
+  });
+});
+
+// Chips de turno no topo (Turno: TOTAL / T1 / T2 / T3) — reaproveita o mesmo setTurnoFilter()
+// já usado pelas linhas da tabela "Comparação por turno".
+document.querySelectorAll('.filter-row .chip[data-turno]').forEach(el => {
+  el.addEventListener('click', () => setTurnoFilter(el.dataset.turno));
+});
+
+document.querySelectorAll('.chip[data-preset]').forEach(el => {
+  el.addEventListener('click', () => {
+    const today = todayOpKey();
+    filters.matrixDay = null;
+    if (el.dataset.preset === 'today')     { filters.from = today; filters.to = today; }
+    if (el.dataset.preset === 'yesterday') { const y = dayKeyOffset(today, -1); filters.from = y; filters.to = y; }
+    if (el.dataset.preset === '7d')        { filters.from = dayKeyOffset(today, -6); filters.to = today; }
+    if (el.dataset.preset === '30d')       { filters.from = dayKeyOffset(today, -29); filters.to = today; }
+    if (el.dataset.preset === 'all')       {
+      const days = [...new Set(enriched.map(r => r.dayKey))].sort();
+      filters.from = days[0] || today; filters.to = days[days.length - 1] || today;
+    }
+    document.getElementById('fromDate').value = filters.from;
+    document.getElementById('toDate').value   = filters.to;
+    document.querySelectorAll('.chip[data-preset]').forEach(c => c.classList.toggle('active', c === el));
+    render();
+  });
+});
+
+document.getElementById('fromDate').addEventListener('change', e => {
+  filters.from = e.target.value; filters.matrixDay = null;
+  document.querySelectorAll('.chip[data-preset]').forEach(c => c.classList.remove('active'));
+  render();
+});
+document.getElementById('toDate').addEventListener('change', e => {
+  filters.to = e.target.value; filters.matrixDay = null;
+  document.querySelectorAll('.chip[data-preset]').forEach(c => c.classList.remove('active'));
+  render();
+});
+document.getElementById('destinoFilter').addEventListener('input', e => { filters.destino = e.target.value; render(); });
+document.getElementById('tableSearch').addEventListener('input', () => renderAllTable(baseFiltered()));
+
+document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+  filters.from = dayKeyOffset(todayOpKey(), -6);
+  filters.to = todayOpKey();
+  filters.turno = 'ALL';
+  filters.destino = '';
+  filters.kpiCls = 'ALL';
+  filters.matrixDay = null;
+  document.getElementById('fromDate').value = filters.from;
+  document.getElementById('toDate').value   = filters.to;
+  document.getElementById('destinoFilter').value = '';
+  document.querySelectorAll('.filter-row .chip[data-turno]').forEach(c => c.classList.toggle('active', c.dataset.turno === 'ALL'));
+  document.querySelectorAll('.chip[data-preset]').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.tbl-toolbar .chip[data-clsfilter]').forEach(c => c.classList.toggle('active', c.dataset.clsfilter === 'ALL'));
+  render();
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const q = (document.getElementById('tableSearch').value || '').trim().toLowerCase();
+  let list = baseFiltered();
+  if (filters.kpiCls !== 'ALL') list = list.filter(r => r.cls === filters.kpiCls);
+  if (q) list = list.filter(r => [r.to_number, r.dest_station_name, r.operator, r.pack_name].some(v => (v || '').toLowerCase().includes(q)));
+  const header = ['TO', 'Tipo', 'Pacotes', 'Status', 'Concluído (PACKED)', 'Dia Operacional', 'Turno', 'Destino', 'Estação'];
+  const rows = list.map(r => [
+    r.to_number,
+    r.cls === 'SACA' ? 'Saca' : r.cls === 'NAO_SACA' ? 'Não Saca' : 'Sem Classificação',
+    r.quantity || 0,
+    r.status || '', fmtDateTime(r.complete_time), r.dayKey, r.turno, r.dest_station_name || '', STATION_LABEL,
+  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  const blob = new Blob(['﻿' + [header.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sacas_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+});
+
+document.getElementById('fromDate').value = filters.from;
+document.getElementById('toDate').value   = filters.to;
+
+const nowCal = new Date();
+document.getElementById('hourlyDate').value = `${nowCal.getFullYear()}-${pad2(nowCal.getMonth() + 1)}-${pad2(nowCal.getDate())}`;
+document.getElementById('hourlyDate').addEventListener('change', renderHourly);
+
+loadData();
+loadPlanejamento();
+setInterval(loadData, 30000);
+setInterval(loadPlanejamento, 5 * 60 * 1000);
+</script>

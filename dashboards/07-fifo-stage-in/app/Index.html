@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<title>FIFO Stage IN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0f1c;
+    --surface: #111a2c;
+    --surface-2: #16223a;
+    --border: #22304d;
+    --text: #e6ecf7;
+    --muted: #8a97b4;
+    --dim: #5d6a88;
+    --primary: #2dd4bf;
+    --primary-ink: #04201c;
+    --accent: #818cf8;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #fb7185;
+    --t1: #38bdf8;
+    --t2: #a78bfa;
+    --t3: #f472b6;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  /* rolagem sem barra visível (página e tabelas) */
+  html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
+  ::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 20px 16px 48px; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  /* Hero */
+  .hero {
+    position: relative; overflow: hidden; border-radius: 18px; padding: 22px 24px;
+    background: radial-gradient(120% 140% at 0% 0%, #12364a 0%, #10213a 45%, #0e1628 100%);
+    border: 1px solid var(--border);
+    display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center;
+  }
+  .hero::after {
+    content: ''; position: absolute; right: -80px; top: -80px; width: 280px; height: 280px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(45,212,191,.18), transparent 70%);
+    pointer-events: none;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--primary); font-weight: 700; }
+  h1 { margin: 6px 0 4px; font-size: 30px; letter-spacing: -.02em; font-weight: 800; }
+  h1 span { color: var(--primary); }
+  .sub { color: var(--muted); font-size: 13px; }
+  .unit-tabs { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+  .hero-kpi { text-align: right; position: relative; z-index: 1; }
+  .hero-kpi .big { font-size: 46px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+  .hero-kpi .lbl { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .hero-actions { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 12px; align-items: center; }
+
+  /* Controls */
+  .chip {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+    border-radius: 999px; padding: 6px 13px; font: 600 12px Inter, sans-serif; cursor: pointer;
+    transition: all .15s;
+  }
+  .chip:hover { color: var(--text); border-color: #34446a; }
+  .chip.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+  .btn-icon { background: rgba(255,255,255,.06); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 7px 12px; cursor: pointer; font: 600 12px Inter, sans-serif; }
+  .btn-icon:hover { background: rgba(255,255,255,.1); }
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 18px; margin: 16px 0 6px; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .fgroup { display: flex; flex-direction: column; gap: 6px; }
+  .fgroup > label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+  .fgroup .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+    padding: 6px 10px; font: 500 12px Inter, sans-serif; min-width: 150px; max-width: 220px;
+  }
+
+  /* Sections */
+  .sec { margin-top: 26px; }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .sec-head h2 { margin: 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .sec-head h2 .n {
+    width: 22px; height: 22px; border-radius: 7px; background: rgba(45,212,191,.14); color: var(--primary);
+    display: inline-grid; place-items: center; font-size: 12px; font-weight: 800;
+  }
+  .sec-head .hint { color: var(--dim); font-size: 12px; }
+  .grid { display: grid; gap: 14px; }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g-7-5 { grid-template-columns: 7fr 5fr; }
+  .g-8-4 { grid-template-columns: 8fr 4fr; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px; min-width: 0;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 13px; font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
+  .card h3 small { color: var(--dim); font-weight: 500; }
+  .kpi .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700;
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .kpi .val { font-size: 34px; font-weight: 800; letter-spacing: -.03em; margin: 10px 0 4px; }
+  .kpi .foot { color: var(--muted); font-size: 12px; }
+  .kpi .foot b { color: var(--text); }
+  .pill { font-size: 10px; font-weight: 800; letter-spacing: .06em; padding: 3px 8px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
+  .pill.good { background: rgba(52,211,153,.14); color: var(--good); }
+  .pill.warn { background: rgba(251,191,36,.14); color: var(--warn); }
+  .pill.bad  { background: rgba(251,113,133,.15); color: var(--bad); }
+  .pill.neutral { background: rgba(129,140,248,.15); color: var(--accent); }
+  .c-good { color: var(--good); } .c-warn { color: var(--warn); } .c-bad { color: var(--bad); }
+  .bar { height: 6px; background: var(--surface-2); border-radius: 99px; overflow: hidden; margin-top: 12px; }
+  .bar > i { display: block; height: 100%; border-radius: 99px; }
+
+  /* Turno cards */
+  .turno { position: relative; overflow: hidden; }
+  .turno::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--tc); }
+  .turno .tname { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+  .turno .tname i { width: 9px; height: 9px; border-radius: 50%; background: var(--tc); }
+  .turno .big { font-size: 40px; font-weight: 800; letter-spacing: -.03em; margin: 8px 0 2px; }
+  .mini-stats { display: flex; gap: 18px; margin-top: 10px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .mini-stats b { color: var(--text); font-size: 14px; display: block; }
+
+  /* Tables */
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--dim); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+    font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid rgba(34,48,77,.6); white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; }
+  .heat td.cell { text-align: center; font-weight: 700; border-radius: 6px; }
+  .heat { border-collapse: separate; border-spacing: 4px; }
+  .heat td { border: 0; padding: 7px 8px; }
+  .ofens td .name { font-weight: 600; }
+  .clicavel { cursor: pointer; transition: border-color .15s, transform .15s, opacity .15s; }
+  .clicavel:hover { border-color: var(--tc, #34446a); transform: translateY(-1px); }
+  .turno.sel { border-color: var(--tc); box-shadow: 0 0 0 1px var(--tc) inset; }
+  .ofens tr.op-row { cursor: pointer; }
+  .ofens tr.op-row:hover td { background: rgba(255,255,255,.03); }
+  .ofens tr.op-row.aberto td { background: rgba(129,140,248,.08); border-bottom-color: transparent; }
+  .ofens .seta { display: inline-block; width: 10px; color: var(--accent); }
+  .ofens tr.det > td { padding: 0 10px 14px; background: rgba(129,140,248,.08); white-space: normal; }
+  .det-box { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+  .det-tit { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+  .det-box td { font-size: 12px; padding: 6px 10px; }
+  .ofens td.lider { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+  .ofens td .id { color: var(--accent); font-size: 12px; font-weight: 500; }
+  .tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+  .tag.t1 { color: var(--t1); } .tag.t2 { color: var(--t2); } .tag.t3 { color: var(--t3); }
+  .tag.out { background: rgba(251,191,36,.12); color: var(--warn); }
+  .rankbar { display: grid; grid-template-columns: minmax(0, 1fr) 140px 64px; gap: 10px; align-items: center; padding: 7px 0; font-size: 12.5px; }
+  .rankbar .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rankbar .track { height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+  .rankbar .track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--bad)); }
+  .rankbar .v { text-align: right; }
+  .rankbar .v small { color: var(--dim); }
+  .chart-box { position: relative; height: 260px; }
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: transparent; color: var(--muted); padding: 5px 10px; border-radius: 8px; font: 600 11.5px Inter, sans-serif; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #0b1020; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .empty { color: var(--dim); text-align: center; padding: 26px 0; font-size: 13px; }
+  .loading { display: grid; place-items: center; min-height: 60vh; color: var(--muted); gap: 14px; text-align: center; }
+  .spin { width: 34px; height: 34px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: s 0.9s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .err { color: var(--bad); }
+  .footer { margin-top: 30px; color: var(--dim); font-size: 11.5px; text-align: center; }
+
+  @media (max-width: 1100px) {
+    .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .g-7-5, .g-8-4, .g2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 720px) {
+    .hero { grid-template-columns: 1fr; }
+    .hero-kpi { text-align: left; }
+    .hero-actions { justify-content: flex-start; }
+    .g4, .g3 { grid-template-columns: 1fr; }
+    h1 { font-size: 24px; }
+    .rankbar { grid-template-columns: minmax(0, 1fr) 80px 56px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="loading"><div class="spin"></div><div>Carregando bases de Stage IN…</div></div>
+</div>
+
+<script>
+const TURNOS = ['T1', 'T2', 'T3'];
+const TCOR = { T1: '#38bdf8', T2: '#a78bfa', T3: '#f472b6' };
+const S = { unidade: '', periodo: '7d', turno: 'ALL', grupo: 'ALL', area: 'ALL', papel: 'out', hist: 'pct', aberto: '' };
+let DB = null;       // payload bruto
+let ROWS = {};       // por unidade: linhas já expandidas
+let HC = {};         // por unidade: Map idLower -> {id, nome, turno}
+let charts = {};
+
+/* ---------- carga ---------- */
+function carregar(forcar) {
+  if (window.MOCK) return iniciar(window.MOCK);
+  google.script.run
+    .withSuccessHandler(iniciar)
+    .withFailureHandler(e => {
+      document.getElementById('app').innerHTML =
+        '<div class="loading"><div class="err">Erro ao carregar: ' + esc(e.message || e) + '</div></div>';
+    })
+    .getDados(!!forcar);
+}
+
+function iniciar(json) {
+  DB = typeof json === 'string' ? JSON.parse(json) : json;
+  ROWS = {}; HC = {};
+  DB.unidades.forEach(u => {
+    const ops = u.ops.map(o => ({ id: o[0], nome: o[1] || o[0], key: u.id + '|' + (o[0] || o[1]).toLowerCase() }));
+    ROWS[u.id] = u.rows.map(r => ({
+      u: u.id, d: r[0], t: r[1], nr: r[2], h: r[3], g: u.grupos[r[4]], a: u.areas[r[5]],
+      oi: ops[r[6]], oo: ops[r[7]], perm: r[8], to: r[9], ri: r[10], ro: r[11], dt: r[12],
+    }));
+    const m = new Map();
+    u.hc.forEach(h => m.set(h[0].toLowerCase(), {
+      id: h[0], nome: h[1], turno: h[2], ativo: !h[3] || h[3] === 'ATIVO', cargo: h[4], setor: h[5], lider: h[6],
+    }));
+    HC[u.id] = m;
+  });
+  if (!S.unidade) S.unidade = (DB.unidades.find(u => u.rows.length) || DB.unidades[0]).id;
+  render();
+}
+
+/* ---------- utilidades ---------- */
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = n => (n == null || isNaN(n)) ? '–' : Math.round(n).toLocaleString('pt-BR');
+const pct = (a, b) => b ? a / b * 100 : null;
+const fpct = v => v == null ? '–' : v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+const fdia = iso => iso ? iso.substr(8, 2) + '/' + iso.substr(5, 2) : '';
+const DIAS_SEM = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const fdiaSem = iso => DIAS_SEM[new Date(iso + 'T12:00:00Z').getUTCDay()] + ' ' + fdia(iso);
+const addDias = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().substr(0, 10); };
+const fmin = m => m == null ? '–' : m >= 60 ? Math.floor(m / 60) + 'h ' + String(Math.round(m % 60)).padStart(2, '0') + 'm' : Math.round(m) + ' min';
+
+function status(p) {
+  if (p == null) return { cls: 'neutral', txt: 'sem dados', cor: 'var(--accent)' };
+  if (p <= DB.meta.bom) return { cls: 'good', txt: 'Bom', cor: 'var(--good)' };
+  if (p <= DB.meta.medio) return { cls: 'warn', txt: 'Médio', cor: 'var(--warn)' };
+  return { cls: 'bad', txt: 'Ruim', cor: 'var(--bad)' };
+}
+function heatBg(p) {
+  if (p == null) return 'transparent';
+  if (p <= DB.meta.bom) return 'rgba(52,211,153,.16)';
+  if (p <= DB.meta.medio) return 'rgba(251,191,36,.18)';
+  return 'rgba(251,113,133,' + Math.min(.18 + p / 40, .55).toFixed(2) + ')';
+}
+const unidadesSel = () => S.unidade === 'ALL' ? DB.unidades.map(u => u.id) : [S.unidade];
+const nomeUnid = id => (DB.unidades.find(u => u.id === id) || {}).nome || id;
+
+/* ---------- filtros ---------- */
+function janela(rows) {
+  const max = rows.reduce((m, r) => r.d > m ? r.d : m, '');
+  if (!max) return { de: '', ate: '' };
+  switch (S.periodo) {
+    case 'ultimo': return { de: max, ate: max };
+    case 'ontem': return { de: addDias(max, -1), ate: addDias(max, -1) };
+    case '7d': return { de: addDias(max, -6), ate: max };
+    case '15d': return { de: addDias(max, -14), ate: max };
+    default: return { de: '', ate: max };
+  }
+}
+function filtrar(rows, opts) {
+  opts = opts || {};
+  const j = janela(rows);
+  return rows.filter(r =>
+    (!j.de || r.d >= j.de) && r.d <= j.ate &&
+    (opts.ignTurno || S.turno === 'ALL' || r.t === S.turno) &&
+    (S.grupo === 'ALL' || r.g === S.grupo) &&
+    (S.area === 'ALL' || r.a === S.area));
+}
+function baseSel() { return unidadesSel().flatMap(u => ROWS[u] || []); }
+
+/* ---------- agregações ---------- */
+function resumo(rows) {
+  let nr = 0, permS = 0, permN = 0;
+  rows.forEach(r => { nr += r.nr; if (r.perm != null && r.perm >= 0) { permS += r.perm; permN++; } });
+  return { tot: rows.length, nr, ok: rows.length - nr, p: pct(nr, rows.length), perm: permN ? permS / permN : null };
+}
+function porChave(rows, fk) {
+  const m = new Map();
+  rows.forEach(r => {
+    const k = fk(r); if (k == null) return;
+    const o = m.get(k) || { k, tot: 0, nr: 0 };
+    o.tot++; o.nr += r.nr; m.set(k, o);
+  });
+  return [...m.values()].map(o => Object.assign(o, { p: pct(o.nr, o.tot) }));
+}
+function hcDe(u, op) { return op && op.id ? HC[u].get(op.id.toLowerCase()) : null; }
+
+function ofensores(rows) {
+  const papel = S.papel === 'in' ? 'oi' : 'oo';
+  const m = new Map();
+  rows.forEach(r => {
+    const op = r[papel]; if (!op || (!op.id && !op.nome)) return;
+    const o = m.get(op.key) || { op, u: r.u, tot: 0, nr: 0, turnos: {} };
+    o.tot++; o.nr += r.nr; o.turnos[r.t] = (o.turnos[r.t] || 0) + 1;
+    m.set(op.key, o);
+  });
+  return [...m.values()].map(o => {
+    const hc = hcDe(o.u, o.op);
+    const tBase = Object.entries(o.turnos).sort((a, b) => b[1] - a[1])[0][0];
+    return Object.assign(o, { hc, turno: hc ? hc.turno : tBase, p: pct(o.nr, o.tot) });
+  });
+}
+
+/* ---------- render ---------- */
+function render() {
+  Object.values(charts).forEach(c => c.destroy()); charts = {};
+  const todas = baseSel();
+  const F = filtrar(todas);
+  const FT = filtrar(todas, { ignTurno: true });
+  const j = janela(todas);
+  const R = resumo(F);
+  const st = status(R.p);
+  const grupos = [...new Set(todas.map(r => r.g))].sort();
+  const areas = [...new Set(todas.filter(r => S.grupo === 'ALL' || r.g === S.grupo).map(r => r.a))].sort();
+  if (S.area !== 'ALL' && !areas.includes(S.area)) S.area = 'ALL';
+
+  const of = ofensores(F);
+  const ofNr = of.filter(o => o.nr > 0).sort((a, b) => b.nr - a.nr || b.p - a.p);
+  const periodoTxt = j.de ? (j.de === j.ate ? fdiaSem(j.ate) : fdia(j.de) + ' → ' + fdia(j.ate)) : 'até ' + fdia(j.ate);
+
+  document.getElementById('app').innerHTML = `
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Inbound · FIFO</div>
+      <h1>Quebra de FIFO <span>Stage IN</span></h1>
+      <div class="sub">Ordem de entrada × ordem de saída do stage · ${esc(periodoTxt)} · base atualizada ${esc(DB.geradoEm)}</div>
+      <div class="unit-tabs">
+        ${DB.unidades.map(u => chip('unidade', u.id, u.nome + (u.rows.length ? '' : ' (sem base)'))).join('')}
+      </div>
+    </div>
+    <div class="hero-kpi">
+      <div class="hero-actions">
+        <span class="pill ${st.cls}">${st.txt}</span>
+        <button class="btn-icon" onclick="recarregar()">↻ Atualizar</button>
+      </div>
+      <div class="big mono" style="color:${st.cor}">${fpct(R.p)}</div>
+      <div class="lbl">quebra de FIFO · meta ≤ ${fpct(DB.meta.bom)}</div>
+    </div>
+  </header>
+
+  <div class="filters">
+    <div class="fgroup"><label>Período</label><div class="row">
+      ${chip('periodo', 'ultimo', 'Último dia')}${chip('periodo', 'ontem', 'Dia anterior')}${chip('periodo', '7d', '7 dias')}${chip('periodo', '15d', '15 dias')}${chip('periodo', 'tudo', 'Tudo')}
+    </div></div>
+    <div class="fgroup"><label>Turno</label><div class="row">
+      ${chip('turno', 'ALL', 'Todos')}${TURNOS.map(t => chip('turno', t, t)).join('')}
+    </div></div>
+    <div class="fgroup"><label>Grupo</label>
+      <select onchange="setF('grupo', this.value)">${opt('ALL', 'Todos', S.grupo)}${grupos.map(g => opt(g, g, S.grupo)).join('')}</select>
+    </div>
+    <div class="fgroup"><label>Área</label>
+      <select onchange="setF('area', this.value)">${opt('ALL', 'Todas', S.area)}${areas.map(a => opt(a, a, S.area)).join('')}</select>
+    </div>
+  </div>
+
+  ${secPanorama(R, F, ofNr)}
+  ${secTurnos(FT)}
+  ${secHistorico()}
+  ${secOnde(F)}
+  ${secOfensores(F, of, ofNr)}
+  ${S.unidade === 'ALL' || DB.unidades.length > 1 ? secComparativo() : ''}
+  ${secUltimas(F)}
+  <div class="footer">Meta: ≤ ${fpct(DB.meta.bom)} bom · até ${fpct(DB.meta.medio)} médio · acima ruim — quebra = TO que saiu do stage fora da ordem de entrada (fifo_status = Not Respected)</div>`;
+
+  desenharGraficos(F);
+}
+
+function chip(campo, v, txt) {
+  return `<button class="chip ${S[campo] === v ? 'on' : ''}" onclick="setF('${campo}','${esc(v)}')">${esc(txt)}</button>`;
+}
+function opt(v, txt, atual) { return `<option value="${esc(v)}" ${v === atual ? 'selected' : ''}>${esc(txt)}</option>`; }
+function setF(campo, v) { S[campo] = v; if (campo === 'grupo') S.area = 'ALL'; render(); }
+function recarregar() {
+  document.getElementById('app').innerHTML = '<div class="loading"><div class="spin"></div><div>Relendo a planilha…</div></div>';
+  carregar(true);
+}
+
+function secPanorama(R, F, ofNr) {
+  const ativos = new Set(F.map(r => (S.papel === 'in' ? r.oi : r.oo).key)).size;
+  const st = status(R.p);
+  return `
+  <section class="sec">
+    <div class="sec-head"><h2><span class="n">1</span>Panorama</h2><span class="hint">filtros aplicados</span></div>
+    <div class="grid g4">
+      <div class="card kpi">
+        <div class="lbl">TOs no stage <span class="pill neutral">volume</span></div>
+        <div class="val mono">${fmt(R.tot)}</div>
+        <div class="foot"><b>${fmt(R.ok)}</b> respeitaram o FIFO</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Quebras de FIFO <span class="pill ${st.cls}">${st.txt}</span></div>
+        <div class="val mono" style="color:${st.cor}">${fmt(R.nr)}</div>
+        <div class="foot"><b>${fpct(R.p)}</b> do volume</div>
+        <div class="bar"><i style="width:${Math.min((R.p || 0) / Math.max(DB.meta.medio * 2, R.p || 0) * 100, 100)}%;background:${st.cor}"></i></div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Colaboradores ofensores <span class="pill bad">${S.papel === 'in' ? 'staging' : 'stage-out'}</span></div>
+        <div class="val mono">${fmt(ofNr.length)}</div>
+        <div class="foot">de <b>${fmt(ativos)}</b> que operaram no período</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Tempo médio no stage <span class="pill neutral">entrada→saída</span></div>
+        <div class="val mono">${fmin(R.perm)}</div>
+        <div class="foot">entre staging e stage-out</div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function secTurnos(FT) {
+  const cards = TURNOS.map(t => {
+    const r = resumo(FT.filter(x => x.t === t));
+    const st = status(r.p);
+    const dim = S.turno !== 'ALL' && S.turno !== t ? 'opacity:.45' : '';
+    return `<div class="card turno clicavel ${S.turno === t ? 'sel' : ''}" style="--tc:${TCOR[t]};${dim}" onclick="filtrarTurno('${t}')" title="${S.turno === t ? 'Clique para ver todos os turnos' : 'Clique para filtrar o ' + t}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="tname"><i></i>${t}</div><span class="pill ${st.cls}">${st.txt}</span>
+      </div>
+      <div class="big mono" style="color:${st.cor}">${fpct(r.p)}</div>
+      <div class="mini-stats">
+        <div><b class="mono">${fmt(r.tot)}</b>TOs</div>
+        <div><b class="mono">${fmt(r.nr)}</b>quebras</div>
+        <div><b class="mono">${fmin(r.perm)}</b>tempo médio</div>
+      </div>
+      <div class="bar"><i style="width:${Math.min((r.p || 0) / Math.max(DB.meta.medio * 2, r.p || 0) * 100, 100)}%;background:${st.cor}"></i></div>
+    </div>`;
+  }).join('');
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">2</span>Quebra por turno</h2><span class="hint">ignora o filtro de turno</span></div>
+    <div class="grid g3">${cards}</div></section>`;
+}
+
+function secHistorico() {
+  const todas = baseSel().filter(r => (S.grupo === 'ALL' || r.g === S.grupo) && (S.area === 'ALL' || r.a === S.area));
+  const max = todas.reduce((m, r) => r.d > m ? r.d : m, '');
+  if (!max) return '';
+  const dias = []; for (let i = 13; i >= 0; i--) dias.push(addDias(max, -i));
+  const lin = dias.map(d => {
+    const dr = todas.filter(r => r.d === d);
+    const cel = TURNOS.map(t => resumo(dr.filter(r => r.t === t)));
+    return { d, cel, tot: resumo(dr) };
+  }).reverse();
+  const td = r => r.tot ? `<td class="cell mono" style="background:${heatBg(r.p)}" title="${r.nr} de ${r.tot} TOs">${S.hist === 'pct' ? fpct(r.p) : fmt(r.nr)}</td>` : '<td class="cell" style="color:var(--dim)">–</td>';
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">3</span>Histórico diário</h2><span class="hint">últimos 14 dias · grupo/área aplicados</span></div>
+    <div class="grid">
+      <div class="card">
+        <h3>Mapa de calor
+          <span class="seg"><button class="${S.hist === 'pct' ? 'on' : ''}" onclick="setF('hist','pct')">%</button><button class="${S.hist === 'qtd' ? 'on' : ''}" onclick="setF('hist','qtd')">Qtd</button></span>
+        </h3>
+        <div class="tbl-wrap"><table class="heat">
+          <thead><tr><th>Dia</th>${TURNOS.map(t => `<th class="num" style="color:${TCOR[t]};text-align:center">${t}</th>`).join('')}<th style="text-align:center">Total</th></tr></thead>
+          <tbody>${lin.map(l => `<tr><td>${fdiaSem(l.d)}</td>${l.cel.map(td).join('')}${td(l.tot)}</tr>`).join('')}</tbody>
+        </table></div>
+        <div class="legend" style="margin-top:10px">
+          <span><i style="background:rgba(52,211,153,.5)"></i>≤ ${fpct(DB.meta.bom)}</span>
+          <span><i style="background:rgba(251,191,36,.55)"></i>≤ ${fpct(DB.meta.medio)}</span>
+          <span><i style="background:rgba(251,113,133,.6)"></i>&gt; ${fpct(DB.meta.medio)}</span>
+        </div>
+      </div>
+    </div></section>`;
+}
+
+function rankList(lista, max) {
+  if (!lista.length) return '<div class="empty">Nenhuma quebra no filtro atual</div>';
+  const top = lista[0].nr || 1;
+  return lista.slice(0, max).map(o => `<div class="rankbar">
+      <div class="nm" title="${esc(o.k)}">${esc(o.k)}</div>
+      <div class="track"><i style="width:${o.nr / top * 100}%"></i></div>
+      <div class="v mono">${fmt(o.nr)} <small>${fpct(o.p)}</small></div>
+    </div>`).join('');
+}
+
+function secOnde(F) {
+  const g = porChave(F, r => r.g).filter(o => o.nr).sort((a, b) => b.nr - a.nr);
+  const a = porChave(F, r => r.a).filter(o => o.nr).sort((a, b) => b.nr - a.nr);
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">4</span>Onde e quando quebra</h2><span class="hint">quantidade de quebras · % sobre o volume do item</span></div>
+    <div class="grid g3">
+      <div class="card"><h3>Por hora do staging <small>quebras por hora · % no tooltip</small></h3><div class="chart-box"><canvas id="chHora"></canvas></div></div>
+      <div class="card"><h3>Por grupo <small>${g.length} com quebra</small></h3>${rankList(g, 8)}</div>
+      <div class="card"><h3>Por área (rua) <small>top 8</small></h3>${rankList(a, 8)}</div>
+    </div></section>`;
+}
+
+function secOfensores(F, of, ofNr) {
+  const us = unidadesSel();
+  const ofT = ofensores(filtrar(baseSel(), { ignTurno: true }));   // cards mostram os 3 turnos mesmo com filtro
+  const hcCards = TURNOS.map(t => {
+    let hc = 0; us.forEach(u => HC[u].forEach(h => { if (h.ativo && h.turno === t) hc++; }));
+    const ativos = ofT.filter(o => o.hc && o.hc.turno === t).length;
+    const ofHc = ofT.filter(o => o.nr > 0 && o.hc && o.hc.turno === t).length;
+    const p = pct(ofHc, hc);
+    return `<div class="card turno clicavel ${S.turno === t ? 'sel' : ''}" style="--tc:${TCOR[t]};${S.turno !== 'ALL' && S.turno !== t ? 'opacity:.45' : ''}"
+        onclick="filtrarTurno('${t}')" title="${S.turno === t ? 'Clique para ver todos os turnos' : 'Clique para filtrar o ' + t}">
+      <div class="tname"><i></i>${t} <span style="color:var(--muted);font-size:12px;font-weight:600">headcount</span></div>
+      <div class="mini-stats" style="margin-top:12px">
+        <div><b class="mono">${fmt(hc)}</b>HC</div>
+        <div><b class="mono">${fmt(ativos)}</b>operaram</div>
+        <div><b class="mono c-bad">${fmt(ofHc)}</b>ofensores</div>
+        <div><b class="mono">${fpct(p)}</b>do HC</div>
+      </div>
+      <div class="bar"><i style="width:${Math.min(p || 0, 100)}%;background:var(--bad)"></i></div>
+    </div>`;
+  }).join('');
+  const fora = ofNr.filter(o => !o.hc).length;
+  const linhas = ofNr.slice(0, 40).map((o, i) => `<tr class="op-row ${S.aberto === o.op.key ? 'aberto' : ''}" data-k="${esc(o.op.key)}" onclick="abrirOp(this.dataset.k)" title="Clique para ver as TOs quebradas">
+      <td class="mono" style="color:var(--dim)"><span class="seta">${S.aberto === o.op.key ? '▾' : '▸'}</span> ${i + 1}</td>
+      <td><div class="name">${o.op.id ? '<span class="id mono">[' + esc(o.op.id) + ']</span> ' : ''}${esc(o.hc ? o.hc.nome || o.op.nome : o.op.nome)}</div></td>
+      <td><span class="tag ${o.turno.toLowerCase()}">${esc(o.turno)}</span> ${o.hc ? (o.hc.ativo ? '' : '<span class="tag out">inativo</span>') : '<span class="tag out" title="Não encontrado na aba de headcount">fora do HC</span>'}</td>
+      <td class="lider" title="${esc(o.hc && o.hc.lider || '')}">${esc(o.hc && o.hc.lider || '–')}</td>
+      <td class="num mono c-bad"><b>${fmt(o.nr)}</b></td>
+      <td class="num mono">${fmt(o.tot)}</td>
+      <td class="num mono" style="color:${status(o.p).cor}">${fpct(o.p)}</td>
+    </tr>${S.aberto === o.op.key ? detalheOp(F, o) : ''}`).join('');
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">5</span>Ofensores × headcount</h2>
+      <span class="seg"><button class="${S.papel === 'out' ? 'on' : ''}" onclick="setF('papel','out')">Quem tirou (stage-out)</button><button class="${S.papel === 'in' ? 'on' : ''}" onclick="setF('papel','in')">Quem colocou (staging)</button></span>
+    </div>
+    <div class="grid g3">${hcCards}</div>
+    <div class="card" style="margin-top:14px">
+      <h3>Ranking de ofensores <small>${fmt(ofNr.length)} colaboradores com quebra${fora ? ' · ' + fora + ' fora do HC' : ''}</small></h3>
+      ${ofNr.length ? `<div class="tbl-wrap"><table class="ofens">
+        <thead><tr><th>#</th><th>Colaborador</th><th>Turno</th><th>Líder</th><th class="num">Quebras</th><th class="num">TOs</th><th class="num">% quebra</th></tr></thead>
+        <tbody>${linhas}</tbody></table></div>` : '<div class="empty">Nenhum ofensor no filtro atual</div>'}
+    </div></section>`;
+}
+
+/** Linha expandida com as TOs que o colaborador quebrou no filtro atual. */
+function detalheOp(F, o) {
+  const papel = S.papel === 'in' ? 'oi' : 'oo';
+  const outro = S.papel === 'in' ? 'oo' : 'oi';
+  const tos = F.filter(r => r.nr && r[papel] && r[papel].key === o.op.key).sort((a, b) => b.dt < a.dt ? -1 : 1);
+  return `<tr class="det"><td colspan="7">
+    <div class="det-box">
+      <div class="det-tit">${fmt(tos.length)} TOs quebradas por ${esc(o.hc ? o.hc.nome || o.op.nome : o.op.nome)}</div>
+      <table>
+        <thead><tr><th>TO</th><th>Staging</th><th>Turno</th><th>Grupo</th><th>Área</th><th class="num">Rank in → out</th><th>${S.papel === 'in' ? 'Stage-out por' : 'Staging por'}</th><th class="num">No stage</th></tr></thead>
+        <tbody>${tos.map(r => `<tr>
+          <td class="mono"><b>${esc(r.to)}</b></td>
+          <td class="mono">${esc(fdia(r.dt.substr(0, 10)) + ' ' + r.dt.substr(11, 5))}</td>
+          <td><span class="tag ${r.t.toLowerCase()}">${esc(r.t)}</span></td>
+          <td>${esc(r.g)}</td>
+          <td>${esc(r.a)}</td>
+          <td class="num mono">${fmt(r.ri)} → <span class="c-bad">${fmt(r.ro)}</span></td>
+          <td>${esc(r[outro] ? r[outro].nome : '–')}</td>
+          <td class="num mono">${fmin(r.perm)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </td></tr>`;
+}
+function abrirOp(k) { S.aberto = S.aberto === k ? '' : k; render(); }
+function filtrarTurno(t) { S.turno = S.turno === t ? 'ALL' : t; render(); }
+
+function secComparativo() {
+  const linhas = DB.unidades.map(u => {
+    const F = filtrar(ROWS[u.id] || []);
+    const r = resumo(F);
+    const papel = S.papel === 'in' ? 'oi' : 'oo';
+    const ofs = new Set(F.filter(x => x.nr).map(x => x[papel].key));
+    let hcT = 0; HC[u.id].forEach(h => { if (h.ativo && (S.turno === 'ALL' || h.turno === S.turno)) hcT++; });
+    const ofHc = [...ofs].filter(k => HC[u.id].has(k.split('|')[1])).length;
+    const st = status(r.p);
+    return `<tr>
+      <td><b>${esc(u.nome)}</b></td>
+      <td class="num mono">${fmt(r.tot)}</td>
+      <td class="num mono">${fmt(r.nr)}</td>
+      <td class="num mono" style="color:${st.cor}"><b>${fpct(r.p)}</b></td>
+      <td><span class="pill ${st.cls}">${st.txt}</span></td>
+      <td class="num mono">${fmt(ofs.size)}</td>
+      <td class="num mono">${fmt(hcT)}</td>
+      <td class="num mono">${fpct(pct(ofHc, hcT))}</td>
+      <td class="num mono">${fmin(r.perm)}</td>
+    </tr>`;
+  }).join('');
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">6</span>Comparativo entre unidades</h2><span class="hint">mesmo período, turno, grupo e área</span></div>
+    <div class="card"><div class="tbl-wrap"><table>
+      <thead><tr><th>Unidade</th><th class="num">TOs</th><th class="num">Quebras</th><th class="num">% quebra</th><th>Status</th><th class="num">Ofensores</th><th class="num">HC</th><th class="num">% HC ofensor</th><th class="num">Tempo médio</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div></div></section>`;
+}
+
+function secUltimas(F) {
+  const nr = F.filter(r => r.nr).sort((a, b) => b.dt < a.dt ? -1 : 1).slice(0, 15);
+  const n = S.unidade === 'ALL' || DB.unidades.length > 1 ? 7 : 6;
+  return `<section class="sec">
+    <div class="sec-head"><h2><span class="n">${n}</span>Últimas quebras</h2><span class="hint">15 mais recentes pelo horário de staging</span></div>
+    <div class="card">${nr.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th>TO</th><th>Staging</th><th>Turno</th><th>Área</th><th class="num">Rank in → out</th><th>Staging por</th><th>Stage-out por</th><th class="num">No stage</th></tr></thead>
+      <tbody>${nr.map(r => `<tr>
+        <td class="mono"><b>${esc(r.to)}</b></td>
+        <td class="mono">${esc(fdia(r.dt.substr(0, 10)) + ' ' + r.dt.substr(11, 5))}</td>
+        <td><span class="tag ${r.t.toLowerCase()}">${esc(r.t)}</span></td>
+        <td>${esc(r.a)}</td>
+        <td class="num mono">${fmt(r.ri)} → <span class="c-bad">${fmt(r.ro)}</span></td>
+        <td>${esc(r.oi.nome)}</td>
+        <td>${esc(r.oo.nome)}</td>
+        <td class="num mono">${fmin(r.perm)}</td>
+      </tr>`).join('')}</tbody></table></div>` : '<div class="empty">Nenhuma quebra no filtro atual</div>'}</div></section>`;
+}
+
+/* ---------- gráficos ---------- */
+function desenharGraficos(F) {
+  if (!window.Chart) return;
+  Chart.defaults.color = '#8a97b4';
+  Chart.defaults.font.family = 'Inter, sans-serif';
+  Chart.defaults.font.size = 11;
+  const grid = { color: 'rgba(34,48,77,.7)' };
+
+  const eh = document.getElementById('chHora');
+  if (eh) {
+    const hs = [...Array(24).keys()];
+    const por = hs.map(h => resumo(F.filter(r => r.h === h)));
+    const ctx = eh.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, eh.parentNode.clientHeight || 260);
+    grad.addColorStop(0, 'rgba(45,212,191,.55)');
+    grad.addColorStop(1, 'rgba(45,212,191,0)');
+    charts.hora = new Chart(eh, {
+      type: 'line',
+      data: {
+        labels: hs.map(h => String(h).padStart(2, '0') + 'h'),
+        datasets: [{
+          label: 'Quebras', data: por.map(r => r.nr), fill: true, backgroundColor: grad,
+          borderColor: '#2dd4bf', borderWidth: 2, tension: .4, pointRadius: 0, pointHoverRadius: 5,
+          pointHoverBackgroundColor: '#2dd4bf',
+        }],
+      },
+      options: {
+        maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false },
+          tooltip: { callbacks: {
+            label: c => 'Quebras: ' + c.parsed.y + ' de ' + fmt(por[c.dataIndex].tot) + ' TOs',
+            afterLabel: c => por[c.dataIndex].tot ? '% quebra: ' + fpct(por[c.dataIndex].p) : '',
+          } } },
+        scales: {
+          y: { beginAtZero: true, grid, ticks: { precision: 0 } },
+          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+        },
+      },
+    });
+  }
+}
+
+carregar();
+</script>
+</body>
+</html>

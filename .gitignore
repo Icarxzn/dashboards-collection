@@ -1,0 +1,32 @@
+# Credenciais - NUNCA commitar
+credencial.json
+*credencial*.json
+.clasprc.json
+
+# Dados reais exportados das planilhas (nomes de operadores, e-mails, TOs).
+# O repositório é público: os CSVs ficam só na máquina, como referência local.
+# Para versionar um CSV de propósito, use: git add -f <arquivo>
+dashboards/*/dados/**/*.csv
+report-fifo-seatalk/dados/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# IDEs / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Prévias do report do Seatalk geradas com DRY_RUN=1
+report-fifo-seatalk/preview_*.png
+
+# ...menos o resumo de estrutura (só nomes de abas e cabeçalhos, sem dados)
+!dashboards/*/dados/**/_resumo.csv
+!report-fifo-seatalk/dados/_resumo.csv
+
+# fonte local da apresentação (publicada como Artifact)
+_deck/

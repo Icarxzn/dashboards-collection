@@ -1,0 +1,506 @@
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  TABS
+// ═══════════════════════════════════════════════════════════════
+function showTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('viewDash').style.display   = tab === 'dash'   ? '' : 'none';
+  document.getElementById('viewReport').style.display = tab === 'report' ? '' : 'none';
+  if (tab === 'report') renderStageReport();
+}
+const reportVisivel = () => document.getElementById('viewReport').style.display !== 'none';
+
+// ═══════════════════════════════════════════════════════════════
+//  CONFIG DO REPORT
+// ═══════════════════════════════════════════════════════════════
+// Farol pelo tempo da rua ocupada (staging_duration_time)
+const SR_FAROIS = [
+  { id: 'critico', nome: 'CRÍTICO', crit: '> 48h',     cor: 'var(--red)',    min: 48 },
+  { id: 'urgente', nome: 'URGENTE', crit: '36h – 48h', cor: '#f97316',       min: 36 },
+  { id: 'atencao', nome: 'ATENÇÃO', crit: '24h – 36h', cor: 'var(--yellow)', min: 24 },
+  { id: 'ok',      nome: 'OK',      crit: '< 24h',     cor: 'var(--green)',  min: 0  },
+];
+const SR_ALERTA_H = 24;   // a partir daqui a rua entra no farol de aging e pede justificativa
+
+// Turno pela hora estimada em que a rua foi endereçada (agora − tempo da rua)
+const SR_TURNOS = [
+  { id: 'T1', hora: '06:00 – 13:59', cor: 'var(--blue)',   de: 6,  ate: 14 },
+  { id: 'T2', hora: '14:00 – 21:59', cor: 'var(--yellow)', de: 14, ate: 22 },
+  { id: 'T3', hora: '22:00 – 05:59', cor: 'var(--purple)', de: 22, ate: 6  },
+];
+
+const SR_MOTIVOS = [
+  'Aguardando veículo extra',
+  'Veículo atrasado',
+  'Sem veículo programado',
+  'Volume acima do previsto',
+  'Aguardando liberação do destino',
+  'Problema sistêmico',
+  'Outro',
+];
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+const sr = {
+  just:      [],          // justificativas gravadas na aba "Justificativas"
+  justOk:    false,
+  turno:     'all',
+  farol:     'all',
+  busca:     '',
+  sort:      { k: 'occ', asc: false },
+  modalDest: null,
+};
+
+async function loadJustificativas() {
+  try {
+    sr.just = JSON.parse(await gs('getJustificativas'));
+    sr.justOk = true;
+    if (reportVisivel()) renderStageReport();
+  } catch (e) { console.warn('[justificativas]', e.message || e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+const srEsc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const srN   = n => (n || 0).toLocaleString('pt-BR');
+const srOp  = s => (s || '').replace(/@shopee\.com/, '').replace(/\[.*?\]/, '').trim() || '—';
+
+function srFarol(seg) {
+  const h = (seg || 0) / 3600;
+  return SR_FAROIS.find(f => h >= f.min) || SR_FAROIS[SR_FAROIS.length - 1];
+}
+function srFarolPill(f) {
+  return `<span class="sr-pill sr-${f.id}">${f.nome}</span>`;
+}
+function srTurnoDe(inicioSeg) {
+  const h = new Date(inicioSeg * 1000).getHours();
+  return SR_TURNOS.find(t => t.de < t.ate ? (h >= t.de && h < t.ate) : (h >= t.de || h < t.ate));
+}
+function srAgoraDados() {
+  const t = Date.parse(lastAt);
+  return Math.floor((isNaN(t) ? Date.now() : t) / 1000);
+}
+
+// Ruas ocupadas (abertas/em carregamento com TO ou gaiola), já com os campos do report
+function srRuas() {
+  const agora = srAgoraDados();
+  const ocupadas = availList.filter(r => (r.cage_quantity || 0) + (r.transport_order_quantity || 0) > 0 || parsePct(r.occupancy_percentage) > 0);
+
+  // Sacas são por destino (aba Packed): reparte entre as ruas do destino pelo nº de gaiolas
+  const gaiolasDest = {}, ruasDest = {};
+  ocupadas.forEach(r => {
+    const id = parseDestId(r.to_destination).id;
+    gaiolasDest[id] = (gaiolasDest[id] || 0) + (r.cage_quantity || 0);
+    ruasDest[id] = (ruasDest[id] || 0) + 1;
+  });
+
+  return ocupadas.map(r => {
+    const d = parseDestId(r.to_destination);
+    const dur = r.staging_duration_time || 0;
+    const inicio = agora - dur;
+    const destSacas = sheet.loaded ? (sheet.byDest[d.id]?.sacas || 0) : 0;
+    const g = r.cage_quantity || 0;
+    const sacas = !sheet.loaded ? null
+      : gaiolasDest[d.id] > 0 ? Math.round(destSacas * g / gaiolasDest[d.id])
+      : Math.round(destSacas / ruasDest[d.id]);
+    return {
+      id: r.staging_area_id,
+      rua: r.staging_area_name,
+      destId: d.id,
+      dest: d.name,
+      gaiolas: g,
+      scuttles: r.transport_order_quantity || 0,
+      tos: g + (r.transport_order_quantity || 0),
+      sacas: sacas,
+      sacasGaiola: sacas !== null && g > 0 ? sacas / g : null,
+      occ: parsePct(r.occupancy_percentage),
+      dur: dur,
+      inicio: inicio,
+      turno: srTurnoDe(inicio),
+      farol: srFarol(dur),
+      operador: srOp(r.operator),
+      // Mesma ocupação da rua = mesma chave; quando a rua esvazia e reabre, a chave muda
+      chave: r.staging_area_id + '|' + Math.round(inicio / 900),
+    };
+  });
+}
+
+function srJustDaChave(chave) {
+  const l = sr.just.filter(j => j.chave === chave);
+  return l.length ? l[l.length - 1] : null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════════════
+function renderStageReport() {
+  const wrap = document.getElementById('srWrap');
+  if (!lastAt) return;
+  const ruas = srRuas();
+  if (!ruas.length) {
+    wrap.innerHTML = '<div class="empty"><h2>Nenhuma rua ocupada</h2><p>Sem ruas abertas com TOs ou gaiolas agora.</p></div>';
+    return;
+  }
+  wrap.innerHTML =
+    srBlocoFarol(ruas) +
+    srBlocoTop10(ruas) +
+    srBlocoTurnos(ruas) +
+    srBlocoCurva(ruas) +
+    srBlocoTabela();
+  srRenderTabela(ruas);
+}
+
+// ── Farol de aging + destinos para justificar ─────────────────────────
+function srBlocoFarol(ruas) {
+  const alerta = ruas.filter(r => r.dur >= SR_ALERTA_H * 3600);
+  const totTos = alerta.reduce((s, r) => s + r.tos, 0);
+  const niveis = SR_FAROIS.filter(f => f.id !== 'ok').map(f => {
+    const rs = alerta.filter(r => r.farol.id === f.id);
+    const tos = rs.reduce((s, r) => s + r.tos, 0);
+    return {
+      f, ruas: rs.length, tos,
+      gaiolas: rs.reduce((s, r) => s + r.gaiolas, 0),
+      destinos: new Set(rs.map(r => r.destId)).size,
+      pct: totTos ? tos / totTos * 100 : 0,
+    };
+  });
+
+  // Destinos com rua acima de 24h
+  const porDest = {};
+  alerta.forEach(r => {
+    const d = porDest[r.destId] || (porDest[r.destId] = { id: r.destId, nome: r.dest, ruas: [] });
+    d.ruas.push(r);
+  });
+  const dests = Object.values(porDest).map(d => {
+    const pend = d.ruas.filter(r => !srJustDaChave(r.chave));
+    const ult = d.ruas.map(r => srJustDaChave(r.chave)).filter(Boolean).sort((a, b) => a.data < b.data ? 1 : -1)[0];
+    const maxDur = Math.max(...d.ruas.map(r => r.dur));
+    return {
+      ...d, pend, ult, maxDur,
+      tos: d.ruas.reduce((s, r) => s + r.tos, 0),
+      sacas: d.ruas.reduce((s, r) => s + (r.sacas || 0), 0),
+      farol: srFarol(maxDur),
+    };
+  }).sort((a, b) => b.maxDur - a.maxDur);
+  const aguardando = dests.filter(d => d.pend.length).length;
+
+  const linhasNivel = niveis.map(n => `<tr>
+      <td><span class="sr-lvl" style="color:${n.f.cor}">${n.f.nome}</span></td>
+      <td style="color:var(--muted)">${n.f.crit}</td>
+      <td><span class="sr-n" style="color:${n.f.cor}">${n.tos}</span></td>
+      <td class="num">${n.ruas}</td>
+      <td class="num">${n.gaiolas}</td>
+      <td class="num">${n.destinos}</td>
+      <td class="num" style="color:var(--muted)">${n.pct.toFixed(1)}%</td>
+      <td><div class="sr-bar"><div style="width:${n.pct.toFixed(1)}%;background:${n.f.cor}"></div></div></td>
+    </tr>`).join('');
+
+  const linhasDest = dests.map(d => {
+    let just;
+    if (!sr.justOk) just = '<span style="color:var(--muted)">…</span>';
+    else if (!d.pend.length) just = `<span class="sr-pill sr-just">JUSTIFICADO</span><span class="sr-just-txt">${srEsc(d.ult?.motivo)}</span>`;
+    else if (d.pend.length < d.ruas.length) just = `<span class="sr-pill sr-parcial">${d.pend.length} PENDENTE(S)</span><span class="sr-just-txt">${srEsc(d.ult?.motivo)}</span>`;
+    else just = '<span class="sr-pill sr-pend">PENDENTE</span>';
+    return `<tr class="${d.farol.id === 'critico' ? 'sr-row-crit' : ''}">
+      <td class="sr-dest">${srEsc(d.nome)}<small>[${d.id}]</small></td>
+      <td class="num">${d.tos}</td>
+      <td class="num">${sheet.loaded ? srN(d.sacas) : '—'}</td>
+      <td class="num" style="color:var(--red)">${fmtDur(d.maxDur)}</td>
+      <td style="font-family:monospace;font-size:11px">${d.ruas.map(r => srEsc(r.rua)).join(', ')}</td>
+      <td>${srFarolPill(d.farol)}</td>
+      <td>${just}</td>
+      <td style="text-align:right"><button class="sr-btn${d.pend.length ? '' : ' ghost'}" onclick="openJustModal('${d.id}')">${d.pend.length ? 'Justificar' : 'Ver / editar'}</button></td>
+    </tr>`;
+  }).join('');
+
+  const ts = new Date(srAgoraDados() * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return `<div class="sr-block">
+    <div class="sr-sec">⏱ Farol de aging — ruas &gt; ${SR_ALERTA_H}h no Stage Out
+      <span class="sr-sec-info">${dests.length} destino${dests.length !== 1 ? 's' : ''}</span>
+      ${aguardando ? `<span class="sr-sec-alert">· ${aguardando} aguardando justificativa</span>` : ''}
+    </div>
+    <div class="sr-box${alerta.some(r => r.farol.id === 'critico') ? ' alert' : ''}" style="margin-bottom:12px">
+      <table class="sr-table">
+        <thead><tr><th>Nível</th><th>Critério (tempo da rua ocupada)</th><th>TOs</th><th>Ruas</th><th>Gaiolas</th><th>Destinos</th><th>% TOs</th><th>Distribuição</th></tr></thead>
+        <tbody>${linhasNivel}</tbody>
+      </table>
+      <div class="sr-note">Aging = agora − horário em que a rua foi ocupada (tempo da rua no SPX). Varredura de ${ruas.length} ruas ocupadas, atualizada às ${ts}. TOs = gaiolas + scuttles na rua.</div>
+    </div>
+    ${dests.length ? `<div class="sr-box">
+      <table class="sr-table">
+        <thead><tr><th>Destino</th><th>TOs</th><th>Sacas</th><th>Mais antiga</th><th>Ruas</th><th>Farol</th><th>Justificativa</th><th></th></tr></thead>
+        <tbody>${linhasDest}</tbody>
+      </table>
+    </div>` : '<div class="sr-box"><div class="sr-note" style="border:0;padding:16px;text-align:center;color:var(--green)">✅ Nenhuma rua acima de ' + SR_ALERTA_H + 'h</div></div>'}
+  </div>`;
+}
+
+// ── Top 10 destinos por ocupação ──────────────────────────────────────
+function srBlocoTop10(ruas) {
+  const porDest = {};
+  ruas.forEach(r => {
+    const d = porDest[r.destId] || (porDest[r.destId] = { id: r.destId, nome: r.dest, ruas: [] });
+    d.ruas.push(r);
+  });
+  const top = Object.values(porDest).map(d => {
+    const gaiolas = d.ruas.reduce((s, r) => s + r.gaiolas, 0);
+    const sacas = d.ruas.reduce((s, r) => s + (r.sacas || 0), 0);
+    return {
+      ...d, gaiolas, sacas,
+      sg: gaiolas > 0 ? sacas / gaiolas : null,
+      occ: d.ruas.reduce((s, r) => s + r.occ, 0) / d.ruas.length,
+      farol: srFarol(Math.max(...d.ruas.map(r => r.dur))),
+    };
+  }).sort((a, b) => b.occ - a.occ).slice(0, 10);
+
+  const linhas = top.map((d, i) => `<tr>
+      <td><span class="sr-rank${i < 3 ? ' r' + (i + 1) : ''}">${i + 1}</span></td>
+      <td class="sr-dest">${srEsc(d.nome)}</td>
+      <td class="num">${d.ruas.length}</td>
+      <td class="num">${d.gaiolas}</td>
+      <td class="num">${sheet.loaded ? srN(d.sacas) : '—'}</td>
+      <td class="num">${d.sg !== null && sheet.loaded ? d.sg.toFixed(1) : '—'}</td>
+      <td><div class="sr-occ"><div class="sr-bar"><div style="width:${Math.min(d.occ, 100).toFixed(0)}%;background:${occColor(d.occ)}"></div></div><span style="color:${occColor(d.occ)}">${d.occ.toFixed(0)}%</span></div></td>
+      <td>${srFarolPill(d.farol)}</td>
+    </tr>`).join('');
+
+  return `<div class="sr-block">
+    <div class="sr-sec">🏆 Top 10 destinos — maior ocupação</div>
+    <div class="sr-box">
+      <table class="sr-table">
+        <thead><tr><th>#</th><th>Destino</th><th>Ruas</th><th>Gaiolas</th><th>Sacas</th><th>Sacas/Gaiola</th><th style="min-width:180px">Ocupação média</th><th>Farol</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+// ── Turnos ────────────────────────────────────────────────────────────
+function srBlocoTurnos(ruas) {
+  const cards = SR_TURNOS.map(t => {
+    const rs = ruas.filter(r => r.turno === t);
+    const pct = ruas.length ? rs.length / ruas.length * 100 : 0;
+    return `<div class="sr-turno" style="--c:${t.cor}">
+      <div class="sr-turno-name">${t.id}</div>
+      <div class="sr-turno-hora">${t.hora}</div>
+      <div class="sr-turno-grid">
+        <div><b>${rs.length}</b><span>ruas</span></div>
+        <div><b>${rs.reduce((s, r) => s + r.gaiolas, 0)}</b><span>gaiolas</span></div>
+        <div><b>${sheet.loaded ? srN(rs.reduce((s, r) => s + (r.sacas || 0), 0)) : '—'}</b><span>sacas</span></div>
+        <div><b>${rs.reduce((s, r) => s + r.scuttles, 0)}</b><span>scuttles</span></div>
+      </div>
+      <div class="sr-bar"><div style="width:${pct.toFixed(1)}%;background:${t.cor}"></div></div>
+      <div class="sr-turno-pct">${pct.toFixed(1)}% das ruas</div>
+    </div>`;
+  }).join('');
+  return `<div class="sr-block">
+    <div class="sr-sec">👥 Responsabilidade por turno (quem endereçou a rua)</div>
+    <div class="sr-turnos">${cards}</div>
+  </div>`;
+}
+
+// ── Curva de endereçamento por hora ───────────────────────────────────
+function srBlocoCurva(ruas) {
+  const cont = Array(24).fill(0);
+  ruas.forEach(r => { cont[new Date(r.inicio * 1000).getHours()]++; });
+  const max = Math.max(...cont, 1);
+  const pico = cont.indexOf(Math.max(...cont));
+  const cols = cont.map((n, h) => `<div class="sr-col">
+      <i>${n || ''}</i>
+      <div class="${h === pico && n ? 'peak' : ''}" style="height:${Math.max(3, Math.round(n / max * 100))}px"></div>
+      <em>${String(h).padStart(2, '0')}h</em>
+    </div>`).join('');
+  return `<div class="sr-block">
+    <div class="sr-sec">📈 Curva de endereçamento por hora</div>
+    <div class="sr-curve">
+      <div class="sr-bars">${cols}</div>
+      <div class="sr-legend"><span>Ruas endereçadas (hora estimada de início)</span><span class="pk">Hora pico</span></div>
+    </div>
+  </div>`;
+}
+
+// ── Tabela operacional ────────────────────────────────────────────────
+const SR_COLS = [
+  { k: 'dest',     t: 'Destino' },
+  { k: 'rua',      t: 'Rua' },
+  { k: 'gaiolas',  t: 'Gaiolas' },
+  { k: 'sacas',    t: 'Sacas' },
+  { k: 'sg',       t: 'Sacas/Gaiola' },
+  { k: 'occ',      t: 'Ocupação' },
+  { k: 'dur',      t: 'Tempo' },
+  { k: 'turno',    t: 'Turno' },
+  { k: 'farol',    t: 'Farol' },
+  { k: 'operador', t: 'Operador' },
+];
+
+function srBlocoTabela() {
+  const chip = (grupo, val, txt) => `<button class="sr-chip${sr[grupo] === val ? ' on' : ''}" onclick="srFiltro('${grupo}','${val}')">${txt}</button>`;
+  return `<div class="sr-block">
+    <div class="sr-sec">📋 Tabela operacional</div>
+    <div class="sr-toolbar">
+      <input id="srBusca" placeholder="Buscar rua, destino ou operador..." value="${srEsc(sr.busca)}" oninput="sr.busca=this.value;srRenderTabela()">
+      ${chip('turno', 'all', 'Todos Turnos')}${chip('turno', 'T1', 'T1')}${chip('turno', 'T2', 'T2')}${chip('turno', 'T3', 'T3')}
+      <span class="sr-gap"></span>
+      ${chip('farol', 'all', 'Todos Farol')}${chip('farol', 'ok', 'OK')}${chip('farol', 'atencao', 'ATENÇÃO')}${chip('farol', 'urgente', 'URGENTE')}${chip('farol', 'critico', 'CRÍTICO')}
+      <span class="sr-count" id="srCount"></span>
+      <button class="sr-chip" onclick="srCsv()">⬇ Export CSV</button>
+    </div>
+    <div class="sr-box sr-scroll">
+      <table class="sr-table">
+        <thead><tr>${SR_COLS.map(c => `<th class="sortable${sr.sort.k === c.k ? ' sorted' : ''}" onclick="srOrdenar('${c.k}')">${c.t} ${sr.sort.k === c.k ? (sr.sort.asc ? '↑' : '↓') : '↕'}</th>`).join('')}</tr></thead>
+        <tbody id="srBody"></tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function srLinhasTabela(ruas) {
+  const q = sr.busca.trim().toLowerCase();
+  let rs = ruas.filter(r =>
+    (sr.turno === 'all' || r.turno?.id === sr.turno) &&
+    (sr.farol === 'all' || r.farol.id === sr.farol) &&
+    (!q || [r.rua, r.dest, r.operador, r.destId].some(v => String(v || '').toLowerCase().includes(q))));
+  const val = (r, k) => k === 'turno' ? (r.turno?.id || '') : k === 'farol' ? r.dur : k === 'sg' ? (r.sacasGaiola ?? -1) : k === 'sacas' ? (r.sacas ?? -1) : r[k];
+  const { k, asc } = sr.sort;
+  rs.sort((a, b) => {
+    const va = val(a, k), vb = val(b, k);
+    const c = typeof va === 'string' ? va.localeCompare(vb, 'pt-BR') : va - vb;
+    return asc ? c : -c;
+  });
+  return rs;
+}
+
+function srRenderTabela(ruas) {
+  const body = document.getElementById('srBody');
+  if (!body) return;
+  const rs = srLinhasTabela(ruas || srRuas());
+  document.getElementById('srCount').textContent = `${rs.length} ruas`;
+  body.innerHTML = rs.map(r => {
+    const tc = r.turno ? 'sr-' + r.turno.id.toLowerCase() : '';
+    return `<tr class="${r.farol.id === 'critico' ? 'sr-row-crit' : ''}" style="cursor:pointer" onclick="openRuaDetailModal('${r.id}')" title="Ver detalhe da rua">
+      <td class="sr-dest">${srEsc(r.dest)}<small>[${r.destId}]</small></td>
+      <td style="font-family:monospace;font-weight:700">${srEsc(r.rua)}</td>
+      <td class="num">${r.gaiolas}</td>
+      <td class="num">${r.sacas !== null ? srN(r.sacas) : '—'}</td>
+      <td class="num">${r.sacasGaiola !== null ? r.sacasGaiola.toFixed(1) : '—'}</td>
+      <td style="min-width:140px"><div class="sr-occ"><div class="sr-bar"><div style="width:${Math.min(r.occ, 100).toFixed(0)}%;background:${occColor(r.occ)}"></div></div><span style="color:${occColor(r.occ)}">${r.occ.toFixed(0)}%</span></div></td>
+      <td class="num" style="color:${r.farol.cor}">${fmtDur(r.dur)}</td>
+      <td>${r.turno ? `<span class="sr-turno-pill ${tc}">${r.turno.id}</span>` : '—'}</td>
+      <td>${srFarolPill(r.farol)}</td>
+      <td style="color:var(--muted);font-size:11px">${srEsc(r.operador)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhuma rua no filtro.</td></tr>';
+}
+
+function srFiltro(grupo, val) {
+  sr[grupo] = val;
+  renderStageReport();
+}
+function srOrdenar(k) {
+  sr.sort = sr.sort.k === k ? { k, asc: !sr.sort.asc } : { k, asc: false };
+  renderStageReport();
+}
+
+function srCsv() {
+  const rs = srLinhasTabela(srRuas());
+  const linhas = [['Destino', 'ID Destino', 'Rua', 'Gaiolas', 'Scuttles', 'Sacas', 'Sacas/Gaiola', 'Ocupação %', 'Tempo', 'Turno', 'Farol', 'Operador'],
+    ...rs.map(r => [r.dest, r.destId, r.rua, r.gaiolas, r.scuttles, r.sacas ?? '', r.sacasGaiola !== null ? r.sacasGaiola.toFixed(1) : '',
+      r.occ.toFixed(0), fmtDur(r.dur), r.turno?.id || '', r.farol.nome, r.operador])];
+  const csv = '﻿' + linhas.map(l => l.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'stage_out_ruas.csv';
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  JUSTIFICATIVA (modal)
+// ═══════════════════════════════════════════════════════════════
+function openJustModal(destId) {
+  sr.modalDest = destId;
+  const ruas = srRuas().filter(r => r.destId === destId && r.dur >= SR_ALERTA_H * 3600);
+  if (!ruas.length) return;
+  const nome = ruas[0].dest;
+  const hist = ruas.map(r => ({ r, j: srJustDaChave(r.chave) })).filter(x => x.j);
+  const checks = ruas.map(r => {
+    const j = srJustDaChave(r.chave);
+    return `<label class="sr-check"><input type="checkbox" value="${srEsc(r.chave)}" ${j ? '' : 'checked'}>
+      <b style="font-family:monospace">${srEsc(r.rua)}</b> · ${fmtDur(r.dur)} · ${srFarolPill(r.farol)} ${j ? '<span style="color:var(--green);font-size:10px">já justificada</span>' : ''}</label>`;
+  }).join('');
+
+  document.getElementById('justModalBox').innerHTML = `
+    <div class="to-modal-header">
+      <div>
+        <div class="to-modal-title">${srEsc(nome)}</div>
+        <div class="to-modal-sub">[${srEsc(destId)}] · ruas acima de ${SR_ALERTA_H}h no Stage Out</div>
+      </div>
+      <button class="to-modal-close" onclick="closeJustModal()">✕</button>
+    </div>
+    <div class="to-modal-body">
+      <div class="sr-form">
+        <div><label>Ruas</label>${checks}</div>
+        <div><label>Motivo</label>
+          <select id="jMotivo"><option value="">Selecione...</option>${SR_MOTIVOS.map(m => `<option>${m}</option>`).join('')}</select>
+        </div>
+        <div><label>Observação</label><textarea id="jObs" placeholder="Detalhe o que está acontecendo (opcional)"></textarea></div>
+        <div><label>Responsável</label><input id="jResp" placeholder="Seu nome"></div>
+        <div id="jErro" style="color:var(--red);font-size:12px;display:none"></div>
+        <div class="sr-actions">
+          <button class="sr-btn ghost" onclick="closeJustModal()">Cancelar</button>
+          <button class="sr-btn" id="jSalvar" onclick="salvarJust()">Salvar justificativa</button>
+        </div>
+        ${hist.length ? `<div class="sr-hist"><b>Histórico</b>${hist.map(x => `<div><b>${srEsc(x.r.rua)}</b> — ${srEsc(x.j.motivo)}${x.j.observacao ? ': ' + srEsc(x.j.observacao) : ''} <span style="opacity:.7">(${srEsc(x.j.responsavel || x.j.usuario || '—')}, ${srEsc(x.j.data)})</span></div>`).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  try { document.getElementById('jResp').value = localStorage.getItem('srResp') || ''; } catch (e) {}
+  document.getElementById('justModal').style.display = 'flex';
+}
+
+function closeJustModal() {
+  document.getElementById('justModal').style.display = 'none';
+  sr.modalDest = null;
+}
+
+async function salvarJust() {
+  const erro = document.getElementById('jErro');
+  const chaves = [...document.querySelectorAll('#justModalBox .sr-check input:checked')].map(i => i.value);
+  const motivo = document.getElementById('jMotivo').value;
+  const resp = document.getElementById('jResp').value.trim();
+  erro.style.display = 'none';
+  if (!chaves.length) { erro.textContent = 'Marque ao menos uma rua.'; erro.style.display = ''; return; }
+  if (!motivo)        { erro.textContent = 'Escolha o motivo.'; erro.style.display = ''; return; }
+  if (!resp)          { erro.textContent = 'Informe o responsável.'; erro.style.display = ''; return; }
+  try { localStorage.setItem('srResp', resp); } catch (e) {}
+
+  const ruas = srRuas().filter(r => chaves.includes(r.chave));
+  const btn = document.getElementById('jSalvar');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    sr.just = JSON.parse(await gs('salvarJustificativa', {
+      destino: `[${ruas[0].destId}] ${ruas[0].dest}`,
+      motivo: motivo,
+      observacao: document.getElementById('jObs').value.trim(),
+      responsavel: resp,
+      ruas: ruas.map(r => ({ chave: r.chave, rua_id: r.id, rua: r.rua, farol: r.farol.nome, tempo_h: (r.dur / 3600).toFixed(1) })),
+    }));
+    sr.justOk = true;
+    closeJustModal();
+    renderStageReport();
+  } catch (e) {
+    erro.textContent = 'Erro ao salvar: ' + (e.message || e);
+    erro.style.display = '';
+    btn.disabled = false; btn.textContent = 'Salvar justificativa';
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeJustModal(); });
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+loadJustificativas();
+setInterval(loadJustificativas, 60 * 1000);   // pega justificativas de outras pessoas
+setInterval(() => { if (reportVisivel()) renderStageReport(); }, 30 * 1000);
+</script>

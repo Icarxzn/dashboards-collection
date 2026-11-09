@@ -1,0 +1,699 @@
+<script>
+// ── Server (google.script.run -> Code.gs) ──────────────────────────────
+function gs(fn, ...args) {
+  return new Promise((resolve, reject) =>
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args));
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+function fmtDur(s) {
+  if (!s || s <= 0) return '—';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h${String(m).padStart(2,'0')}m` : `${m}m`;
+}
+function durClass(s) {
+  if (s > 7200) return 'crit';
+  if (s > 1800) return 'warn';
+  return '';
+}
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function fmtWeight(g) {
+  const kg = g / 1000;
+  return kg >= 1000 ? `${(kg/1000).toFixed(1)}t` : `${kg.toFixed(1)}kg`;
+}
+function cleanOp(s) {
+  return (s || '—').replace(/\[Ops\d+\]/i, '').replace(/@shopee\.com/i, '').trim() || '—';
+}
+function packClass(name) {
+  if (!name) return 'pack-other';
+  const n = name.toLowerCase();
+  if (n === 'saca')    return 'pack-saca';
+  if (n === 'scuttle') return 'pack-scuttle';
+  return 'pack-other';
+}
+
+// ── TO Detail Modal (dados da própria aba Packing) ─────────────────────
+function findTO(to_number) {
+  for (const g of groups) {
+    const to = g.tos.find(t => t.to_number === to_number);
+    if (to) return to;
+  }
+  return null;
+}
+
+function openToDetailModal(to_number) {
+  document.getElementById('toDetailModal').style.display = 'flex';
+  const to = findTO(to_number);
+  if (!to) { renderToDetailError(to_number, 'TO não encontrada na planilha (pode já ter saído da lista).'); return; }
+  renderToDetailResult(to_number, to);
+}
+
+function closeToDetailModal() {
+  document.getElementById('toDetailModal').style.display = 'none';
+}
+
+function toDetailHeader(to_number, sub) {
+  return `<div class="to-modal-header">
+    <div>
+      <div class="to-modal-title">${to_number}</div>
+      ${sub ? `<div class="to-modal-sub">${sub}</div>` : ''}
+    </div>
+    <button class="to-modal-close" onclick="closeToDetailModal()">✕</button>
+  </div>`;
+}
+
+function renderToDetailError(to_number, error) {
+  document.getElementById('toDetailModalBox').innerHTML = `
+    ${toDetailHeader(to_number)}
+    <div class="to-modal-body">
+      <div class="to-modal-empty">
+        <div class="emoji">❌</div>
+        ${error || 'erro desconhecido'}
+      </div>
+    </div>`;
+}
+
+function renderToDetailResult(to_number, data) {
+  const now = Math.floor(Date.now() / 1000);
+  const durSec = data.ctime ? now - data.ctime : 0;
+  const linhas = [
+    ['Operador',      cleanOp(data.operator)],
+    ['Início',        fmtDateTime(data.ctime)],
+    ['Duração',       `<span class="dur ${durClass(durSec)}">${fmtDur(durSec)}</span>`],
+    ['Estação atual', data.current_station_name || '—'],
+    ['Destino',       data.dest_station_name || data.receiver || '—'],
+    ['Direção',       data.display_direction || '—'],
+    ['LH Trip',       data.lh_trip_number || '—'],
+  ];
+  const rows = linhas.map(([k, v]) => `<tr>
+      <td style="font-size:11px;color:var(--muted);width:40%">${k}</td>
+      <td style="font-size:12px;font-weight:600">${v}</td>
+    </tr>`).join('');
+
+  document.getElementById('toDetailModalBox').innerHTML = `
+    ${toDetailHeader(to_number, `${data.sender || '—'} → ${data.receiver || '—'}`)}
+    <div class="to-modal-body">
+      <div class="to-modal-kpis">
+        <div class="to-mkpi"><div class="to-mkpi-label">Pacotes</div><div class="to-mkpi-val" style="color:var(--purple)">${data.quantity ?? 0}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">Peso</div><div class="to-mkpi-val" style="color:var(--yellow)">${fmtWeight(data.weight || 0)}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">Tipo</div><div class="to-mkpi-val">${data.pack_name || '—'}</div></div>
+        <div class="to-mkpi"><div class="to-mkpi-label">Status</div><div class="to-mkpi-val" style="color:var(--green)">${data.status || '—'}</div></div>
+      </div>
+      <div class="to-modal-table-wrap">
+        <table class="to-modal-table"><tbody>${rows}</tbody></table>
+      </div>
+    </div>`;
+}
+
+// ── All-TOs table helpers ───────────────────────────────────────────────
+function getSortVal(to, key, now) {
+  switch (key) {
+    case 'to_number': return to.to_number || '';
+    case 'operator':  return cleanOp(to.operator);
+    case 'pack_name': return to.pack_name || '';
+    case 'quantity':  return to.quantity || 0;
+    case 'weight':    return to.weight || 0;
+    case 'ctime':     return to.ctime || 0;
+    case 'dur':       return to.ctime ? now - to.ctime : 0;
+    case 'fanout':    return to._fanout || '';
+    default:          return 0;
+  }
+}
+
+function sortAllTOs(key) {
+  allTOsSortAsc = allTOsSortKey === key ? !allTOsSortAsc : false;
+  allTOsSortKey = key;
+  filterAllTOs();
+}
+
+function filterAllTOs() {
+  const q = (document.getElementById('allToSearch')?.value || '').trim().toLowerCase();
+  const tbody = document.getElementById('allTOsBody');
+  if (!tbody) return;
+  const now = Math.floor(Date.now() / 1000);
+
+  let filtered = allTOsData.filter(to =>
+    !q || [to.to_number, to._fanout, cleanOp(to.operator), to.pack_name || '']
+      .some(v => (v || '').toLowerCase().includes(q))
+  );
+
+  filtered.sort((a, b) => {
+    const va = getSortVal(a, allTOsSortKey, now);
+    const vb = getSortVal(b, allTOsSortKey, now);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return allTOsSortAsc ? cmp : -cmp;
+  });
+
+  let count = 0;
+  tbody.innerHTML = filtered.map(to => {
+    count++;
+    const durSec = to.ctime ? now - to.ctime : 0;
+    return `<tr>
+      <td class="row-idx">${count}</td>
+      <td><span class="to-num to-num-clickable" onclick="openToDetailModal('${to.to_number}')" title="Ver detalhes desta TO">${to.to_number}</span></td>
+      <td class="op-name">${cleanOp(to.operator)}</td>
+      <td><span class="pack-pill ${packClass(to.pack_name)}">${to.pack_name || '—'}</span></td>
+      <td style="text-align:right;font-family:monospace">${to.quantity || 0}</td>
+      <td style="font-family:monospace;font-size:11px">${fmtWeight(to.weight || 0)}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--muted)">${fmtTime(to.ctime)}</td>
+      <td><span class="dur ${durClass(durSec)}">${fmtDur(durSec)}</span></td>
+      <td style="font-size:11px;color:var(--blue)">${to._fanout || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const el = document.getElementById('allTOsCount');
+  if (el) el.textContent = `${filtered.length} de ${allTOsData.length} TOs`;
+
+  document.querySelectorAll('.tos-all-table th[data-sk]').forEach(th => {
+    const sk = th.dataset.sk;
+    if (!sk) return;
+    const base = th.dataset.label;
+    th.textContent = sk === allTOsSortKey ? base + (allTOsSortAsc ? ' ▲' : ' ▼') : base;
+  });
+}
+
+function exportAllTOs() {
+  const now = Math.floor(Date.now() / 1000);
+  const header = ['#','TO Number','Operador','Tipo','Pacotes','Peso (g)','Início','Duração (s)','Fanout'];
+  const rows = allTOsData.map((to, i) => [
+    i + 1, to.to_number, cleanOp(to.operator), to.pack_name || '',
+    to.quantity || 0, to.weight || 0, fmtTime(to.ctime),
+    to.ctime ? now - to.ctime : 0,
+    to._fanout || '',
+  ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
+  const blob = new Blob(['﻿' + [header.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `tos_packing_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── State ──────────────────────────────────────────────────────────────
+let groups        = [];
+let sortKey       = 'duracao';
+let sortAsc       = false;
+let lastAt        = null;
+let activeTab     = 'dash';
+let allTOsData    = [];
+let allTOsSortKey = 'dur';
+let allTOsSortAsc = false;
+let reportFarolFilter = null; // 'crit' | 'urgente' | 'atencao' | 'ok' | null — filtra a tela inteira do Report
+
+// ── Tab switching ──────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('dashTab').style.display   = tab === 'dash'   ? '' : 'none';
+  document.getElementById('reportTab').style.display = tab === 'report' ? '' : 'none';
+  document.getElementById('tabDash').classList.toggle('active',   tab === 'dash');
+  document.getElementById('tabReport').classList.toggle('active', tab === 'report');
+  if (tab === 'report') renderReport();
+}
+
+// ── Group by destination ───────────────────────────────────────────────
+function buildGroups(list) {
+  const map = {};
+  list.forEach(to => {
+    const id   = to.dest_station_id;
+    const name = to.dest_station_name || to.receiver || '—';
+    if (!map[id]) map[id] = { id, name, tos: [] };
+    map[id].tos.push(to);
+  });
+  return Object.values(map).map(g => ({
+    ...g,
+    totPacotes: g.tos.reduce((s, t) => s + (t.quantity || 0), 0),
+    totPeso:    g.tos.reduce((s, t) => s + (t.weight   || 0), 0),
+    maxDur:     Math.max(...g.tos.map(t => Date.now() / 1000 - t.ctime), 0),
+  }));
+}
+
+// ── Sort / filter ──────────────────────────────────────────────────────
+function sortedGroups(g) {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  let filtered = q
+    ? g.filter(d => d.name.toLowerCase().includes(q) ||
+                    String(d.id).includes(q) ||
+                    d.tos.some(t => t.to_number.toLowerCase().includes(q)))
+    : g.slice();
+  const keyMap = { tos: 'tos', pacotes: 'totPacotes', peso: 'totPeso', duracao: 'maxDur' };
+  const key = keyMap[sortKey] || 'maxDur';
+  filtered.sort((a, b) => {
+    const av = key === 'tos' ? a.tos.length : a[key];
+    const bv = key === 'tos' ? b.tos.length : b[key];
+    return sortAsc ? av - bv : bv - av;
+  });
+  return filtered;
+}
+
+// ── Render card ────────────────────────────────────────────────────────
+function renderCard(g, expanded) {
+  const now = Date.now() / 1000;
+  const toRows = g.tos
+    .sort((a, b) => (now - a.ctime) > (now - b.ctime) ? -1 : 1)
+    .map(to => {
+      const durSec = now - to.ctime;
+      const dc = durClass(durSec);
+      return `<tr>
+        <td><span class="to-num to-num-clickable" onclick="event.stopPropagation();openToDetailModal('${to.to_number}')" title="Ver detalhes desta TO">${to.to_number}</span></td>
+        <td><span class="op-name">${cleanOp(to.operator)}</span></td>
+        <td><span class="pack-pill ${packClass(to.pack_name)}">${to.pack_name || '—'}</span></td>
+        <td style="text-align:center;font-family:monospace">${to.quantity || 0}</td>
+        <td style="font-family:monospace;font-size:11px">${fmtWeight(to.weight || 0)}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--muted)">${fmtTime(to.ctime)}</td>
+        <td><span class="dur ${dc}">${fmtDur(durSec)}</span></td>
+      </tr>`;
+    }).join('');
+
+  return `
+    <div class="dest-card${expanded ? ' expanded' : ''}" data-id="${g.id}">
+      <div class="dest-header">
+        <span class="dest-id">${g.id}</span>
+        <span class="dest-name" title="${g.name}">${g.name}</span>
+        <div class="dest-badges">
+          <span class="badge badge-blue">${g.tos.length} TO${g.tos.length !== 1 ? 's' : ''}</span>
+          <span class="badge badge-purple">${g.totPacotes} pac.</span>
+          <span class="badge badge-yellow">${fmtWeight(g.totPeso)}</span>
+        </div>
+        <span class="chevron">&#x25BC;</span>
+      </div>
+      <div class="tos-wrap">
+        <table class="tos-table">
+          <thead>
+            <tr>
+              <th>TO Number</th><th>Operador</th><th>Tipo</th>
+              <th>Pacotes</th><th>Peso</th><th>In&iacute;cio</th><th>Dura&ccedil;&atilde;o</th>
+            </tr>
+          </thead>
+          <tbody>${toRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Full render ────────────────────────────────────────────────────────
+const expandedIds = new Set();
+
+function render() {
+  const list      = sortedGroups(groups);
+  const container = document.getElementById('destList');
+  document.getElementById('countInfo').textContent = `${list.length} destinos`;
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty"><p>Nenhum destino encontrado.</p></div>';
+    return;
+  }
+
+  container.innerHTML = list.map(g => renderCard(g, expandedIds.has(String(g.id)))).join('');
+
+  container.querySelectorAll('.dest-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const card = hdr.closest('.dest-card');
+      const id   = card.dataset.id;
+      if (expandedIds.has(id)) expandedIds.delete(id);
+      else expandedIds.add(id);
+      card.classList.toggle('expanded');
+    });
+  });
+}
+
+// ── Update stats ───────────────────────────────────────────────────────
+function updateStats(data) {
+  const list = data.list || [];
+  document.getElementById('sDest').textContent    = groups.length;
+  document.getElementById('sTOs').textContent     = list.length;
+  document.getElementById('sPacotes').textContent = list.reduce((s, t) => s + (t.quantity || 0), 0);
+
+  const pesoKg = list.reduce((s, t) => s + (t.weight || 0), 0) / 1000;
+  document.getElementById('sPeso').textContent =
+    pesoKg >= 1000 ? `${(pesoKg / 1000).toFixed(1)}t` : `${pesoKg.toFixed(0)}`;
+
+  const t  = new Date(data.fetchedAt);
+  const ts = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  document.getElementById('lastUpdated').textContent = ts;
+  document.getElementById('liveDot').className       = 'live-dot on';
+  document.getElementById('metaTag').textContent     = `packing · ${list.length} TOs · ${ts}`;
+}
+
+// ── Render Report ──────────────────────────────────────────────────────
+function renderReport() {
+  const reportWrap = document.getElementById('reportWrap');
+  const allTOs = groups.flatMap(g => g.tos);
+  const now = Math.floor(Date.now() / 1000);
+
+  if (!allTOs.length) {
+    reportWrap.innerHTML = `<div class="empty"><h2>&#x23F3; Sem dados</h2><p>Nenhuma TO encontrada para o relat&oacute;rio.</p></div>`;
+    return;
+  }
+
+  // Timestamp bar
+  const nowDate = new Date();
+  const hh   = String(nowDate.getHours()).padStart(2,'0');
+  const mm   = String(nowDate.getMinutes()).padStart(2,'0');
+  const dd   = String(nowDate.getDate()).padStart(2,'0');
+  const mo   = String(nowDate.getMonth()+1).padStart(2,'0');
+  const yyyy = nowDate.getFullYear();
+  const tsStr = `${hh}:${mm} &middot; ${dd}/${mo}/${yyyy}`;
+
+  // Farol: based on now - ctime (time in packing)
+  // OK <1h, ATENÇÃO 1-3h, URGENTE 3-6h, CRÍTICO >6h
+  const farolLevels = [
+    { key: 'crit',    label: 'CR&Iacute;TICO',  dotClass: 'crit-dot',    lblClass: 'crit-label',    valClass: 'crit-val',    rowClass: 'farol-crit-row',    cond: s => s > 21600 },
+    { key: 'urgente', label: 'URGENTE',          dotClass: 'urgente-dot', lblClass: 'urgente-label', valClass: 'urgente-val', rowClass: 'farol-urgente-row', cond: s => s > 10800 && s <= 21600 },
+    { key: 'atencao', label: 'ATEN&Ccedil;&Atilde;O', dotClass: 'atencao-dot', lblClass: 'atencao-label', valClass: 'atencao-val', rowClass: '', cond: s => s > 3600 && s <= 10800 },
+    { key: 'ok',      label: 'OK',               dotClass: 'ok-dot',      lblClass: 'ok-label',      valClass: 'ok-val',      rowClass: '',                  cond: s => s <= 3600 },
+  ];
+  function farolKeyOf(to) {
+    const dur = to.ctime ? now - to.ctime : 0;
+    const level = farolLevels.find(l => l.cond(dur));
+    return level ? level.key : null;
+  }
+
+  // Contagens do farol sempre sobre o TOTAL (nao filtrado) — e o "menu" de filtro
+  const totalTOs0 = allTOs.length;
+  const farolCounts = {};
+  farolLevels.forEach(l => { farolCounts[l.key] = 0; });
+  allTOs.forEach(to => { const k = farolKeyOf(to); if (k) farolCounts[k]++; });
+  const hasCrit = farolCounts['crit'] > 0;
+
+  // Clicar numa linha do farol filtra a tela inteira do Report por aquele nivel
+  const farolRows = farolLevels.map(l => {
+    const cnt = farolCounts[l.key];
+    const pct = totalTOs0 > 0 ? (cnt / totalTOs0 * 100).toFixed(1) + '%' : '0.0%';
+    const active = reportFarolFilter === l.key;
+    return `<tr class="${l.rowClass}${active ? ' farol-row-active' : ''}" onclick="toggleFarolFilter('${l.key}')" title="Clique para filtrar por ${l.label}">
+      <td>
+        <div class="farol-level ${l.lblClass}">
+          <span class="farol-dot ${l.dotClass}"></span>
+          ${l.label}
+        </div>
+      </td>
+      <td style="color:var(--muted);font-size:12px">
+        ${l.key === 'crit'    ? 'Em packing h&aacute; mais de 6h' :
+          l.key === 'urgente' ? 'Em packing entre 3h e 6h' :
+          l.key === 'atencao' ? 'Em packing entre 1h e 3h' :
+                                'Em packing menos de 1h'}
+      </td>
+      <td><span class="farol-count ${l.valClass}">${cnt}</span></td>
+      <td><span class="farol-pct">${pct}</span></td>
+    </tr>`;
+  }).join('');
+
+  // A partir daqui, tudo (KPIs, top10, turnos, curva, tabela) reflete o farol selecionado
+  const visibleTOs = reportFarolFilter ? allTOs.filter(to => farolKeyOf(to) === reportFarolFilter) : allTOs;
+
+  // KPIs (sobre o conjunto visivel/filtrado)
+  const totalTOs     = visibleTOs.length;
+  const totalPacotes = visibleTOs.reduce((s, t) => s + (t.quantity || 0), 0);
+  const totalScuttle = visibleTOs.filter(t => (t.pack_name || '').toLowerCase() === 'scuttle').length;
+  const totalSacas   = visibleTOs.filter(t => (t.pack_name || '').toLowerCase() === 'saca').length;
+
+  function regroupByDest(list) {
+    const map = {};
+    list.forEach(to => {
+      const id   = to.dest_station_id;
+      const name = to.dest_station_name || to.receiver || '—';
+      if (!map[id]) map[id] = { id, name, tos: [] };
+      map[id].tos.push(to);
+    });
+    return Object.values(map).map(g => ({
+      ...g,
+      totPacotes: g.tos.reduce((s, t) => s + (t.quantity || 0), 0),
+      totPeso:    g.tos.reduce((s, t) => s + (t.weight   || 0), 0),
+    }));
+  }
+
+  // Top 10 by max duration (sobre o conjunto visivel/filtrado)
+  const groupsWithDur = regroupByDest(visibleTOs).map(g => {
+    const durs   = g.tos.map(to => to.ctime ? now - to.ctime : 0);
+    const maxDur = Math.max(...durs, 0);
+    const avgDur = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0;
+    return { ...g, maxDur, avgDur };
+  });
+  groupsWithDur.sort((a, b) => b.maxDur - a.maxDur);
+  const top10 = groupsWithDur.slice(0, 10);
+
+  const top10Rows = top10.map((g, i) => {
+    const rank = i + 1;
+    const rankClass = rank <= 3 ? `rank-${rank}` : '';
+    const avgDc  = durClass(g.avgDur);
+    const maxDc  = durClass(g.maxDur);
+    const rowCls = g.maxDur > 21600 ? 'row-crit' : g.maxDur > 10800 ? 'row-warn' : '';
+    const farolDot = g.maxDur > 21600
+      ? '<span class="farol-dot crit-dot" style="display:inline-block;margin-right:4px"></span>'
+      : g.maxDur > 10800
+      ? '<span class="farol-dot urgente-dot" style="display:inline-block;margin-right:4px"></span>'
+      : g.maxDur > 3600
+      ? '<span class="farol-dot atencao-dot" style="display:inline-block;margin-right:4px"></span>'
+      : '<span class="farol-dot ok-dot" style="display:inline-block;margin-right:4px"></span>';
+    return `<tr class="${rowCls}">
+      <td><div class="top10-rank ${rankClass}">${rank}</div></td>
+      <td style="font-weight:600;font-size:13px">${g.name}</td>
+      <td style="font-family:monospace;font-weight:700">${g.tos.length}</td>
+      <td style="font-family:monospace">${g.totPacotes}</td>
+      <td><span class="dur ${avgDc}" style="font-size:12px">${fmtDur(g.avgDur)}</span></td>
+      <td><span class="dur ${maxDc}" style="font-size:12px">${fmtDur(g.maxDur)}</span></td>
+      <td>${farolDot}</td>
+    </tr>`;
+  }).join('');
+
+  // Turno: based on ctime hour (start of packing)
+  const turnos = {
+    T1: { tos: 0, pac: 0, label: 'T1', time: '06:00 &ndash; 13:59', cls: 't1' },
+    T2: { tos: 0, pac: 0, label: 'T2', time: '14:00 &ndash; 21:59', cls: 't2' },
+    T3: { tos: 0, pac: 0, label: 'T3', time: '22:00 &ndash; 05:59', cls: 't3' },
+  };
+  visibleTOs.forEach(to => {
+    if (!to.ctime) return;
+    const h = new Date(to.ctime * 1000).getHours();
+    const key = (h >= 6 && h < 14) ? 'T1' : (h >= 14 && h < 22) ? 'T2' : 'T3';
+    turnos[key].tos++;
+    turnos[key].pac += (to.quantity || 0);
+  });
+  const turnoCards = ['T1','T2','T3'].map(k => {
+    const t   = turnos[k];
+    const pct = totalTOs > 0 ? (t.tos / totalTOs * 100) : 0;
+    return `<div class="turno-card ${t.cls}">
+      <div class="turno-label ${t.cls}">${t.label}</div>
+      <div class="turno-time">${t.time}</div>
+      <div class="turno-stat">${t.tos}</div>
+      <div class="turno-meta">TOs &nbsp;&middot;&nbsp; ${pct.toFixed(1)}% do total</div>
+      <div class="turno-bar-wrap"><div class="turno-bar ${t.cls}" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="turno-pac">${t.pac.toLocaleString('pt-BR')} pacotes</div>
+    </div>`;
+  }).join('');
+
+  // Hourly curve: based on ctime hour
+  const hourCounts = Array(24).fill(0);
+  const hourPacs   = Array(24).fill(0);
+  visibleTOs.forEach(to => {
+    if (!to.ctime) return;
+    const h = new Date(to.ctime * 1000).getHours();
+    hourCounts[h]++;
+    hourPacs[h] += (to.quantity || 0);
+  });
+  const maxHourCount = Math.max(...hourCounts, 1);
+  const peakHour = hourCounts.indexOf(Math.max(...hourCounts));
+  const MAX_BAR_H = 120;
+  const hourBars = hourCounts.map((cnt, h) => {
+    const isPeak = h === peakHour && cnt > 0;
+    const barH   = Math.max(3, Math.round(cnt / maxHourCount * MAX_BAR_H));
+    const lbl    = String(h).padStart(2,'0');
+    return `<div class="hour-col">
+      <div class="hour-bar-val">${cnt > 0 ? cnt : ''}</div>
+      <div class="hour-bar${isPeak ? ' peak' : ''}" style="height:${barH}px"></div>
+      <div class="hour-lbl">${lbl}h</div>
+    </div>`;
+  }).join('');
+
+  reportWrap.innerHTML = `
+    <!-- Timestamp bar -->
+    <div class="report-ts-bar">
+      <span class="ts-label">Gerado em:</span>
+      <span>${tsStr}</span>
+      <span class="report-ts-badge">${totalTOs} TOs</span>
+    </div>
+
+    <!-- KPI cards -->
+    <div class="report-kpis">
+      <div class="kpi-card kpi-blue">
+        <div class="kpi-label">Total de TOs</div>
+        <div class="kpi-value">${totalTOs}</div>
+        <div class="kpi-sub">em packing agora</div>
+      </div>
+      <div class="kpi-card kpi-purple">
+        <div class="kpi-label">Total de Pacotes</div>
+        <div class="kpi-value">${totalPacotes}</div>
+        <div class="kpi-sub">volumes totais</div>
+      </div>
+      <div class="kpi-card kpi-yellow">
+        <div class="kpi-label">Total Scuttle</div>
+        <div class="kpi-value">${totalScuttle}</div>
+        <div class="kpi-sub">tipo scuttle</div>
+      </div>
+      <div class="kpi-card kpi-green">
+        <div class="kpi-label">Total Sacas</div>
+        <div class="kpi-value">${totalSacas}</div>
+        <div class="kpi-sub">tipo saca</div>
+      </div>
+    </div>
+
+    <!-- Farol section -->
+    <div class="report-section">
+      <div class="report-section-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Farol Operacional de TO's em Packing &mdash; clique numa linha para filtrar a tela</span>
+        ${reportFarolFilter ? `<button onclick="toggleFarolFilter('${reportFarolFilter}')" style="background:rgba(59,130,246,.12);border:1px solid var(--blue);color:var(--blue);padding:3px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">
+          Filtrando: ${farolLevels.find(l => l.key === reportFarolFilter).label} &#x2715;
+        </button>` : ''}
+      </div>
+      <div class="farol-wrap${hasCrit ? ' has-crit' : ''}">
+        <table class="farol-table">
+          <thead>
+            <tr>
+              <th>Farol</th>
+              <th>Mensagem</th>
+              <th>N&ordm; de TOs</th>
+              <th>% do Total</th>
+            </tr>
+          </thead>
+          <tbody>${farolRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Top 10 section -->
+    <div class="report-section">
+      <div class="report-section-title">Top 10 Destinos &mdash; Maior Tempo de Dura&ccedil;&atilde;o</div>
+      <div class="top10-wrap">
+        <table class="top10-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Destino</th>
+              <th>TOs</th>
+              <th>Pacotes</th>
+              <th>Tempo M&eacute;dio</th>
+              <th>TO Mais Antiga</th>
+              <th>Farol</th>
+            </tr>
+          </thead>
+          <tbody>${top10Rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Turno section -->
+    <div class="report-section">
+      <div class="report-section-title">Responsabilidade por Turno</div>
+      <div class="turno-cards">${turnoCards}</div>
+    </div>
+
+    <!-- Hourly curve -->
+    <div class="report-section">
+      <div class="report-section-title">Curva de TO's Packing por Hora</div>
+      <div class="hour-chart">${hourBars}</div>
+    </div>
+
+    <!-- All TOs table -->
+    <div class="report-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="report-section-title" style="margin-bottom:0">Todas as TOs &mdash; ${totalTOs} registros</div>
+        <button onclick="exportAllTOs()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:5px 14px;border-radius:8px;font-size:12px;cursor:pointer"
+          onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">&#x2B07; CSV</button>
+      </div>
+      <div style="margin-bottom:10px">
+        <input type="text" id="allToSearch" placeholder="Buscar por TO, operador, fanout, tipo&hellip;"
+          oninput="filterAllTOs()"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:8px;font-size:12px;outline:none;box-sizing:border-box">
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;max-height:560px;overflow-y:auto">
+        <table class="tos-all-table">
+          <thead>
+            <tr>
+              <th data-sk="" data-label="#">#</th>
+              <th data-sk="to_number" data-label="TO Number"  onclick="sortAllTOs('to_number')">TO Number</th>
+              <th data-sk="operator"  data-label="Operador"   onclick="sortAllTOs('operator')">Operador</th>
+              <th data-sk="pack_name" data-label="Tipo"       onclick="sortAllTOs('pack_name')">Tipo</th>
+              <th data-sk="quantity"  data-label="Pacotes"    onclick="sortAllTOs('quantity')" style="text-align:right">Pacotes</th>
+              <th data-sk="weight"    data-label="Peso"       onclick="sortAllTOs('weight')">Peso</th>
+              <th data-sk="ctime"     data-label="In&iacute;cio"  onclick="sortAllTOs('ctime')">In&#237;cio</th>
+              <th data-sk="dur"       data-label="Dura&ccedil;&atilde;o" onclick="sortAllTOs('dur')">Dura&#231;&#227;o &#x25BC;</th>
+              <th data-sk="fanout"    data-label="Fanout"     onclick="sortAllTOs('fanout')">Fanout</th>
+            </tr>
+          </thead>
+          <tbody id="allTOsBody"></tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:right" id="allTOsCount">${totalTOs} TOs</div>
+    </div>
+  `;
+
+  allTOsData = visibleTOs.map(to => ({ ...to, _fanout: to.dest_station_name || to.receiver || '—' }));
+  allTOsData.sort((a, b) => {
+    const wa = a.ctime ? now - a.ctime : 0;
+    const wb = b.ctime ? now - b.ctime : 0;
+    return wb - wa;
+  });
+  filterAllTOs();
+}
+
+// Clicar numa linha do farol filtra a tela inteira do Report; clicar de novo limpa o filtro
+function toggleFarolFilter(key) {
+  reportFarolFilter = reportFarolFilter === key ? null : key;
+  renderReport();
+}
+
+// ── Load data ──────────────────────────────────────────────────────────
+// TOs "Packing" há mais tempo que isso quase certamente já concluíram de verdade
+// no SPX (empacotamento normal completa em minutos/poucas horas — mediana real
+// é ~1.3h) e só continuam aparecendo porque a planilha ainda não tirou a linha.
+const MAX_AGE_HOURS = 24;
+
+async function loadData() {
+  try {
+    const data = JSON.parse(await gs('getTosPacking'));
+    if (data.error) {
+      document.getElementById('destList').innerHTML = `<div class="empty"><h2>Erro na planilha</h2><p>${data.error}</p></div>`;
+      return;
+    }
+    if (data.fetchedAt === lastAt) return;
+    lastAt = data.fetchedAt;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const maxAgeSec = MAX_AGE_HOURS * 3600;
+    // Só TOs ainda em Packing (sem conclusão) e não "órfãs"
+    const filtered = (data.list || []).filter(to =>
+      (!to.status || to.status === 'Packing') && (!to.ctime || (nowSec - to.ctime) <= maxAgeSec));
+    groups = buildGroups(filtered);
+    updateStats({ ...data, list: filtered });
+    render();
+    if (activeTab === 'report') renderReport();
+  } catch (e) { console.warn('[packing]', e.message || e); }
+}
+
+// ── Sort buttons ───────────────────────────────────────────────────────
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const s = btn.dataset.sort;
+    if (sortKey === s) sortAsc = !sortAsc;
+    else { sortKey = s; sortAsc = false; }
+    document.querySelectorAll('.sort-btn').forEach(b => {
+      b.classList.remove('active');
+      b.querySelector('.arrow').textContent = '↕';
+    });
+    btn.classList.add('active');
+    btn.querySelector('.arrow').textContent = sortAsc ? '↑' : '↓';
+    render();
+  });
+});
+
+document.getElementById('search').addEventListener('input', render);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeToDetailModal(); });
+
+loadData();
+setInterval(loadData, 15000);
+</script>

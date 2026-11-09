@@ -1,0 +1,4 @@
+﻿aba,arquivo,linhas_de_dados,colunas,cabecalho
+Stage OUT,Stage_OUT.csv,155,15,staging_area_id | staging_area_name | staging_area_status | capacity | operator | to_destination | transport_order_quantity | loose_order_quantity | occupancy_percentage | priority | cage_quantity | staging_duration_time | ctime | mtime | Atualizado: 09/11/2026 18:22:10
+Justificativas,Justificativas.csv,2,11,data | chave | rua_id | rua | destino | farol | tempo_h | motivo | observacao | responsavel | usuario
+Packed,Packed.csv,3443,26,to_number | current_station_id | current_station_name | ctime | complete_time | operator | sender | receiver | receiver_id | dest_station_id | dest_station_name | receiver_type | weight | transfer_direction | status_code | status | quantity | remark | is_non_order | pack_name | pack_id | high_value | rfid | volumetric_weight | length | width

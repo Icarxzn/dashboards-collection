@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TO's Packing Dashboard · <?= unidade ?></title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">📦</div>
+  <div class="header-title">
+    <h1>TO's Packing Dashboard · <?= unidade ?></h1>
+    <p>SPX EXPRESS &middot; ORDENS EM PROCESSO DE EMBALAGEM</p>
+  </div>
+  <div class="header-right">
+    <span class="meta-tag" id="metaTag">&mdash;</span>
+    <div class="live-badge">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="lastUpdated">Aguardando...</span>
+    </div>
+  </div>
+</header>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" id="tabDash" onclick="switchTab('dash')">&#x1F4E6; Dashboard</button>
+  <button class="tab-btn" id="tabReport" onclick="switchTab('report')">&#x1F4CA; Report</button>
+</div>
+
+<!-- Dashboard tab -->
+<div id="dashTab">
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Destinos</div>
+      <div class="stat-value" id="sDest" style="color:var(--accent)">&mdash;</div>
+      <div class="stat-sub">destinos &uacute;nicos</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total de TOs</div>
+      <div class="stat-value" id="sTOs" style="color:var(--blue)">&mdash;</div>
+      <div class="stat-sub">em packing</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Pacotes</div>
+      <div class="stat-value" id="sPacotes" style="color:var(--purple)">&mdash;</div>
+      <div class="stat-sub">total de volumes</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Peso Total</div>
+      <div class="stat-value" id="sPeso" style="color:var(--green)">&mdash;</div>
+      <div class="stat-sub">kg estimados</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search" placeholder="Buscar por destino ou TO...">
+    </div>
+    <div class="sort-btns">
+      <button class="sort-btn active" data-sort="duracao">Dura&ccedil;&atilde;o <span class="arrow">&#x2193;</span></button>
+      <button class="sort-btn" data-sort="tos">TOs <span class="arrow">&#x2195;</span></button>
+      <button class="sort-btn" data-sort="pacotes">Pacotes <span class="arrow">&#x2195;</span></button>
+      <button class="sort-btn" data-sort="peso">Peso <span class="arrow">&#x2195;</span></button>
+    </div>
+    <span class="count-info" id="countInfo"></span>
+  </div>
+
+  <div class="dest-list" id="destList">
+    <div class="empty">
+      <h2>&#x23F3; Carregando planilha...</h2>
+      <p>Lendo a aba <b>Packing</b>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Report tab -->
+<div id="reportTab" style="display:none">
+  <div id="reportWrap"></div>
+</div>
+
+<!-- TO Detail Modal -->
+<div class="to-modal-overlay" id="toDetailModal" style="display:none" onclick="if(event.target===this)closeToDetailModal()">
+  <div class="to-modal-box" id="toDetailModalBox"></div>
+</div>
+
+<?!= include('JavaScript'); ?>
+</body>
+</html>
