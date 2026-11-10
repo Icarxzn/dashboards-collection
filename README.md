@@ -15,6 +15,7 @@ rótulo da unidade no `CONFIG` do `Code.gs`.
 | 05 | **TO's Packing** | TOs em embalagem, tempo em packing; Report com farol e turnos | [README](dashboards/05-tos-packing/README.md) | ![](dashboards/05-tos-packing/preview-dashboard.png) |
 | 06 | **Produtividade de Sacas** | % de pacotes em saca por dia operacional/turno, hora a hora × planejado | [README](dashboards/06-produtividade-sacas/README.md) | ![](dashboards/06-produtividade-sacas/preview-dashboard.png) |
 | 07 | **FIFO Stage IN** | Quebra de FIFO no stage de entrada, ofensores × headcount (PE2 + PE4 num só painel) | [README](dashboards/07-fifo-stage-in/README.md) | ![](dashboards/07-fifo-stage-in/preview-dashboard.png) |
+| 08 | **Produtividade por Operador** | Produção hora a hora × meta (aba Meta) por turno, operadores na meta de 500/h (só PE2 por enquanto) | [README](dashboards/08-produtividade-operadores/README.md) | ![](dashboards/08-produtividade-operadores/preview-dashboard.png) |
 | — | **Report FIFO no Seatalk** | Mensagem + imagem diária de quebra de FIFO (Python) | [README](report-fifo-seatalk/README.md) | — |
 
 > As imagens de preview usam **dados fictícios** (geradas por `tools/gerar_previews.py`).
@@ -32,6 +33,7 @@ Abrir logado com conta **@shopee.com** (o acesso é restrito ao domínio).
 | TO's Packing | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycby7yXnsVuZR5pC7lXPk6q6L_bVb4OoqpM7if0fdWOWlZUBP9ZTs2tbUNURNQm9YahEB/exec) | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbwHppGkkWEuLaeOk5YU2yBmzp-_T6kC2_WEhRL37A7m4IZ_Sah3Rq2mq0QY1QerCyNY/exec) |
 | Produtividade de Sacas | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbwCff3M6jVGI3DbiP3Ce-uwTDNkYScUG_zuOYxaOeRrRo_Ywn47Zutjm0PufWDgFBPo/exec) | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbydJnPkhf1EL4ZkLq8jDkx-ZJYci8E9iR72r96R08Q0DwwKsgHYIzljEtefBVTJQUhT/exec) |
 | FIFO Stage IN | [abrir (PE2 + PE4)](https://script.google.com/a/macros/shopee.com/s/AKfycbymhO0ljXXcgPygiGrbvtjxC0_1kPpPA49hY8Acf18XSHM_OKHcHlkwfQoC7KA3_U7h/exec) | ↔ |
+| Produtividade por Operador | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbwLQS99GJ8_YhL1JKLwBk7SFyp7owKGzlQElT1GklpNjACbgms_EXZh4oJBb6iafk8J/exec) | — |
 
 IDs de planilha, projeto Apps Script e implantação de cada um: [`tools/catalogo.py`](tools/catalogo.py).
 

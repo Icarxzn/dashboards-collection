@@ -1,0 +1,384 @@
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  Produtividade por Operador — lógica da tela
+// ═══════════════════════════════════════════════════════════════
+const POLL_MS = 15000;               // consulta o servidor (que responde do cache)
+const TURNOS = ['T1', 'T2', 'T3'];   // T1 06–14 · T2 14–22 · T3 22–06
+
+// Modo claro / escuro (lembra a escolha neste navegador)
+(function () {
+  let salvo = 'dark';
+  try { salvo = localStorage.getItem('prodTheme') || 'dark'; } catch (e) {}
+  document.documentElement.setAttribute('data-theme', salvo);
+  quandoPronto(() => { document.getElementById('themeBtn').textContent = salvo === 'light' ? '🌙' : '☀️'; });
+})();
+function toggleTheme() {
+  const html = document.documentElement;
+  const prox = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', prox);
+  document.getElementById('themeBtn').textContent = prox === 'light' ? '🌙' : '☀️';
+  try { localStorage.setItem('prodTheme', prox); } catch (e) {}
+}
+
+function quandoPronto(fn) {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+  else fn();
+}
+
+let DATA = null;
+let ultimoCarimbo = null;
+const estado = { turno: '', busca: '', soAtivos: true, sort: 'total', dir: -1 };
+
+function gs(fn, ...args) {
+  return new Promise((ok, err) => {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(err)[fn](...args);
+  });
+}
+
+const fmt = n => Math.round(n).toLocaleString('pt-BR');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const MINUSC = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+function nomeBonito(s) {
+  return String(s).toLowerCase().split(/\s+/).filter(Boolean)
+    .map((p, i) => (i > 0 && MINUSC.has(p)) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+function turnoDaHora(hhmm) {
+  const h = parseInt(hhmm, 10);
+  return h >= 6 && h < 14 ? 'T1' : h >= 14 && h < 22 ? 'T2' : 'T3';
+}
+const corTurno = t => 'var(--' + t.toLowerCase() + ')';
+
+// ── Carga ─────────────────────────────────────────────────────
+async function carregar() {
+  try {
+    const json = await gs('getProdutividade');
+    const d = JSON.parse(json);
+    if (d.error) throw new Error(d.error);
+    document.getElementById('erro').hidden = true;
+    document.getElementById('liveDot').classList.add('on');
+    if (d.fetchedAt !== ultimoCarimbo) {
+      ultimoCarimbo = d.fetchedAt;
+      DATA = preparar(d);
+      renderTudo();
+    }
+    const dt = new Date(d.fetchedAt);
+    document.getElementById('lastUpdated').textContent =
+      'Atualizado ' + dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (e) {
+    document.getElementById('liveDot').classList.remove('on');
+    const el = document.getElementById('erro');
+    el.textContent = 'Erro ao carregar: ' + (e && e.message ? e.message : e);
+    el.hidden = false;
+  }
+}
+
+function preparar(d) {
+  const turnoH = d.horas.map(turnoDaHora);
+  d.turnoH = turnoH;
+  d.ops.forEach(o => {
+    o.nomeFmt = nomeBonito(o.nome);
+    o.horasAtivas = o.h.filter(v => v > 0).length;
+    o.uph = o.horasAtivas ? o.total / o.horasAtivas : 0;
+    o.horasMeta = o.h.filter(v => v >= META_OP_HORA).length;
+    const porT = { T1: 0, T2: 0, T3: 0 };
+    o.h.forEach((v, k) => { porT[turnoH[k]] += v; });
+    o.turno = o.total > 0 ? TURNOS.reduce((a, t) => porT[t] > porT[a] ? t : a, 'T1') : '';
+    o.porT = porT;
+  });
+  d.maxCel = Math.max(1, ...d.ops.map(o => Math.max(0, ...o.h)));
+  d.maxTot = Math.max(1, ...d.ops.map(o => o.total));
+  return d;
+}
+
+function renderTudo() {
+  if (!estado.chartTurno) estado.chartTurno = turnoDaHora(DATA.agora || '06:00');   // abre no turno atual
+  renderKpis();
+  renderChart();
+  renderTabela();
+  requestAnimationFrame(() => { renderKpis(); renderChart(); });   // 2ª passada com o layout já montado
+}
+
+// ── Visão geral: anéis, mini cartões e áreas ─────────────────
+function renderKpis() {
+  const d = DATA;
+  const ativos = d.ops.filter(o => o.total > 0);
+  const horasOp = ativos.reduce((a, o) => a + o.horasAtivas, 0);
+  const somaAtivos = ativos.reduce((a, o) => a + o.total, 0);
+  const uph = horasOp ? somaAtivos / horasOp : 0;
+  const tAtual = turnoDaHora(d.agora || '06:00');
+  const tSel = estado.chartTurno || tAtual;
+  document.getElementById('turnoAtual').textContent = 'Agora ' + (d.agora || '') + ' · ' + tAtual;
+  document.querySelectorAll('#selTurno button').forEach(b => {
+    b.classList.toggle('active', b.dataset.t === tSel);
+    b.classList.toggle('atual', b.dataset.t === tAtual);
+    b.title = { T1: '06:00 – 13:59', T2: '14:00 – 21:59', T3: '22:00 – 05:59' }[b.dataset.t] + (b.dataset.t === tAtual ? ' · turno atual' : '');
+  });
+  const hs = d.horas;
+  document.getElementById('metaTag').textContent = hs.length ? 'Janela ' + hs[0] + ' – ' + hs[hs.length - 1] : '—';
+
+  // Anel 1: % da meta do turno escolhido (meta até agora)
+  const rt = calcTurno(tSel);
+  const pT = rt.meta ? rt.prod / rt.meta : 0;
+  anel('ringMeta', pT, rt.meta ? pct1(pT) : '—', tSel);
+  document.getElementById('ringMetaLbl').textContent = 'da meta do ' + tSel;
+  document.getElementById('ringMetaSub').textContent = rt.meta ? fmt(rt.prod) + ' de ' + fmt(rt.meta) : 'sem meta cadastrada';
+
+  // Área 1: produção por hora
+  document.getElementById('sTotal').textContent = fmt(d.geral.total);
+  sparkline('sparkProd', d.geral.h, ['#8b5cf6', '#38bdf8']);
+  let iPico = -1;
+  d.geral.h.forEach((v, k) => { if (v > 0 && (iPico < 0 || v > d.geral.h[iPico])) iPico = k; });
+  document.getElementById('sPico').innerHTML = iPico >= 0
+    ? 'Hora pico <b>' + d.horas[iPico] + '</b> · <b>' + fmt(d.geral.h[iPico]) + '</b> unidades' : 'Sem produção';
+
+  // Área 2: operadores ativos por hora
+  const opsHora = d.horas.map((_, k) => d.ops.filter(o => o.h[k] > 0).length);
+  document.getElementById('sOps').textContent = fmt(ativos.length);
+  document.getElementById('sOpsSub').textContent = 'operadores com produção · ' + fmt(d.ops.length) + ' na lista';
+  sparkline('sparkOps', opsHora, ['#e879f9', '#8b5cf6']);
+  document.getElementById('sMedia').innerHTML = 'Média <b>' + (ativos.length ? fmt(somaAtivos / ativos.length) : '—') +
+    '</b> por operador · até <b>' + Math.max(0, ...opsHora) + '</b> operadores na mesma hora';
+}
+
+function anel(id, frac, valor, sub) {
+  const r = 62, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+  document.getElementById(id).innerHTML =
+    '<svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="' + r + '" fill="none" style="stroke:var(--track)" stroke-width="12"/>' +
+    '<circle cx="75" cy="75" r="' + r + '" fill="none" stroke="url(#gRing)" stroke-width="12" stroke-linecap="round" ' +
+    'stroke-dasharray="' + (c * f).toFixed(1) + ' ' + c.toFixed(1) + '"/></svg>' +
+    '<div class="ring-val"><b>' + valor + '</b><small>' + (sub || '') + '</small></div>';
+}
+
+function hbar(rotulo, v, max) {
+  return '<div class="hbar"><span title="' + esc(rotulo) + '">' + esc(rotulo) + '</span>' +
+    '<div class="trk"><i style="width:' + (v / max * 100).toFixed(1) + '%"></i></div><b>' + fmt(v) + '</b></div>';
+}
+
+function sparkline(id, vals, cores) {
+  const box = document.getElementById(id);
+  const W = Math.max(200, box.clientWidth), H = 90;
+  const max = Math.max(1, ...vals), n = vals.length;
+  if (n < 2) { box.innerHTML = ''; return; }
+  const x = i => i / (n - 1) * W, y = v => H - 6 - (H - 14) * v / max;
+  let dPath = 'M' + x(0) + ',' + y(vals[0]);
+  for (let i = 0; i < n - 1; i++) {     // curva suave entre os pontos (não passa do valor de nenhum deles)
+    const xm = (x(i) + x(i + 1)) / 2;
+    dPath += ' C' + xm + ',' + y(vals[i]) + ' ' + xm + ',' + y(vals[i + 1]) + ' ' + x(i + 1) + ',' + y(vals[i + 1]);
+  }
+  const gid = 'g' + id;
+  box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+    '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + cores[0] + '" stop-opacity=".55"/>' +
+    '<stop offset="1" stop-color="' + cores[1] + '" stop-opacity="0"/></linearGradient>' +
+    '<linearGradient id="' + gid + 'l" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="' + cores[0] + '"/><stop offset="1" stop-color="' + cores[1] + '"/></linearGradient></defs>' +
+    '<path d="' + dPath + ' L' + W + ',' + H + ' L0,' + H + ' Z" fill="url(#' + gid + ')"/>' +
+    '<path d="' + dPath + '" fill="none" stroke="url(#' + gid + 'l)" stroke-width="2.5"/></svg>';
+}
+
+// ── Produção por hora × meta ─────────────────────────────────
+// Turnos do gráfico: T1 06:00–13:59 · T2 14:00–21:59 · T3 22:00–05:59
+const HORAS_TURNO = {
+  T1: [6, 7, 8, 9, 10, 11, 12, 13],
+  T2: [14, 15, 16, 17, 18, 19, 20, 21],
+  T3: [22, 23, 0, 1, 2, 3, 4, 5],
+};
+const LIMIAR_MELHORAR = 0.8;   // ≥ 100% bateu · ≥ 80% dá pra melhorar · abaixo baixa performance
+const META_OP_HORA = 500;      // meta por operador por hora (UPH)
+const stOp = v => v >= META_OP_HORA ? 'ok' : v >= META_OP_HORA * LIMIAR_MELHORAR ? 'mid' : 'bad';
+const posDia = h => (h - 6 + 24) % 24;          // posição da hora no dia operacional (06h = 0)
+const faixa = h => String(h).padStart(2, '0') + '-' + String((h + 1) % 24).padStart(2, '0');
+
+function calcTurno(t) {
+  const d = DATA;
+  const real = {};
+  d.horas.forEach((hr, k) => { real[parseInt(hr, 10)] = d.geral.h[k]; });
+  const [ah, am] = (d.agora || '00:00').split(':').map(Number);
+  const agoraPos = posDia(ah);
+  const pts = HORAS_TURNO[t].map(h => {
+    const r = h in real && posDia(h) <= agoraPos ? real[h] : null;
+    const m = d.meta && d.meta[h] != null ? d.meta[h] : null;
+    const p = r != null && m ? r / m : null;
+    const st = p == null ? 'na' : p >= 1 ? 'ok' : p >= LIMIAR_MELHORAR ? 'mid' : 'bad';
+    // meta "até agora": hora passada inteira, hora atual proporcional aos minutos, futuras não contam
+    const frac = posDia(h) < agoraPos ? 1 : posDia(h) === agoraPos ? am / 60 : 0;
+    return { h: h, r: r, m: m, p: p, st: st, mAteAgora: (m || 0) * frac };
+  });
+  const comDado = pts.filter(x => x.r != null);
+  return { pts: pts, comDado: comDado, prod: comDado.reduce((a, x) => a + x.r, 0), meta: pts.reduce((a, x) => a + x.mAteAgora, 0) };
+}
+
+function renderChart() {
+  const t = estado.chartTurno;
+  const { pts, comDado, prod, meta } = calcTurno(t);
+  const pctT = meta ? prod / meta : null;
+  const stT = pctT == null ? '' : pctT >= 1 ? 'ok' : pctT >= LIMIAR_MELHORAR ? 'mid' : 'bad';
+  document.getElementById('phResumo').innerHTML = comDado.length
+    ? 'Produzido <b>' + fmt(prod) + '</b><span class="sep">|</span>Meta até agora <b>' + (meta ? fmt(meta) : '—') + '</b>' +
+      (pctT != null ? '<span class="sep">|</span><b style="color:var(--' + stT + ')">' + pct1(pctT) + '</b> da meta' : '')
+    : 'Sem produção no ' + t;
+
+  // Gráfico (SVG): barra = realizado, traço = meta da hora
+  const box = document.getElementById('chart');
+  // altura acompanha a tela: ocupa o espaço livre abaixo do cabeçalho (mín. 380, máx. 720)
+  const W = Math.max(520, box.clientWidth);
+  const H = Math.round(Math.min(720, Math.max(420, window.innerHeight * 0.68)));   // só depende da altura da tela
+  const pl = 56, pr = 8, pt = 40, pb = 56;
+  const n = pts.length, slot = (W - pl - pr) / n, bw = Math.min(120, slot * 0.7);
+  const fsBar = Math.max(11, Math.min(16, bw / 4.3));          // número da barra cabe na largura da barra
+  ESCALA_META = Math.max(0.8, Math.min(1, slot / 110));         // etiqueta da meta acompanha a largura
+  const vmax = Math.max(1, ...pts.map(x => Math.max(x.r || 0, x.m || 0))) * 1.12;
+  const y = v => pt + (H - pt - pb) * (1 - v / vmax);
+  const cx = i => pl + slot * i + slot / 2;
+  const cor = { ok: 'var(--ok)', mid: 'var(--mid)', bad: 'var(--bad)', na: 'var(--muted)' };
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Produção por hora do ' + t + ' comparada à meta">';
+  for (let g = 0; g <= 4; g++) {
+    const v = vmax / 4 * g;
+    s += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y(v) + '" y2="' + y(v) + '" style="stroke:var(--border)"' + (g ? ' stroke-dasharray="2 4"' : '') + '/>' +
+      '<text x="' + (pl - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="12" style="fill:var(--muted)">' + fmtK(v) + '</text>';
+  }
+  pts.forEach((x, i) => {
+    const c = cx(i);
+    if (x.r != null) {
+      const yt = Math.min(y(x.r), H - pb - 2);
+      s += '<rect x="' + (c - bw / 2) + '" y="' + yt + '" width="' + bw + '" height="' + (H - pb - yt) + '" rx="6" style="fill:' + cor[x.st] + '" opacity=".88">' +
+        '<title>' + faixa(x.h) + ' · ' + fmt(x.r) + (x.m ? ' de ' + fmt(x.m) + ' (' + pct1(x.p) + ')' : '') + '</title></rect>';
+      const dentro = (H - pb - yt) > fsBar * 2.2;   // barra alta: número dentro do topo da barra; baixa: logo acima
+      let ylab = dentro ? yt + fsBar * 1.45 : yt - 10;
+      // se o número cair na etiqueta/ponto da meta, desce para logo abaixo da linha
+      if (x.m != null && ylab > y(x.m) - 38 && ylab < y(x.m) + 14) {
+        const abaixo = y(x.m) + 30;
+        if (abaixo < H - pb - 6) ylab = abaixo;
+      }
+      s += '<text x="' + c + '" y="' + ylab + '" text-anchor="middle" font-size="' + fsBar.toFixed(1) + '" font-weight="700" style="fill:' + (dentro ? '#14162e' : 'var(--text)') + '">' + fmt(x.r) + '</text>';
+    }
+    const base = H - pb;
+    s += '<text x="' + c + '" y="' + (base + 22) + '" text-anchor="middle" font-size="15" font-weight="700" style="fill:var(--text)">' + String(x.h).padStart(2, '0') + 'h</text>' +
+      '<text x="' + c + '" y="' + (base + 43) + '" text-anchor="middle" font-size="15" font-weight="700" style="fill:' + cor[x.st] + '">' + (x.p != null ? pct1(x.p) : '—') + '</text>';
+  });
+  // Linha da meta: curva ligando a meta de cada hora, com um ponto e o valor em cima de cada hora
+  const mp = pts.map((x, i) => x.m != null ? [cx(i), y(x.m), x] : null).filter(Boolean);
+  if (mp.length > 1) {
+    // curva arredondada: controles na metade do caminho, na altura de cada ponto -> sem ondas além dos pontos
+    let dPath = 'M' + mp[0][0] + ',' + mp[0][1];
+    for (let i = 0; i < mp.length - 1; i++) {
+      const xm = (mp[i][0] + mp[i + 1][0]) / 2;
+      dPath += ' C' + xm + ',' + mp[i][1] + ' ' + xm + ',' + mp[i + 1][1] + ' ' + mp[i + 1][0] + ',' + mp[i + 1][1];
+    }
+    s += '<path d="' + dPath + '" fill="none" style="stroke:var(--meta)" stroke-width="7" stroke-opacity=".12" stroke-linecap="round"/>' +
+         '<path d="' + dPath + '" fill="none" style="stroke:var(--meta)" stroke-width="2.5" stroke-linecap="round"/>';
+  }
+  mp.forEach(p => {
+    s += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="5" style="fill:var(--meta);stroke:var(--surface)" stroke-width="2"><title>Meta ' + faixa(p[2].h) + ': ' + fmt(p[2].m) + '</title></circle>' +
+      // valor da meta em cima do ponto, numa etiqueta escura (lê bem mesmo sobre a barra)
+      etiquetaMeta(p[0], p[1] - 22, fmt(p[2].m));
+  });
+  box.innerHTML = s + '</svg>';
+}
+
+let ESCALA_META = 1;
+function etiquetaMeta(x, y, txt) {
+  const f = 13 * ESCALA_META, w = txt.length * f * 0.62 + 12, h = f + 7;
+  return '<rect x="' + (x - w / 2) + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="6" style="fill:var(--tag-bg);stroke:var(--border2)"/>' +
+    '<text x="' + x + '" y="' + (y + f * 0.35) + '" text-anchor="middle" font-size="' + f.toFixed(1) + '" font-weight="700" style="fill:var(--meta)">' + txt + '</text>';
+}
+
+const pct1 = p => (p * 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '%';
+const fmtK = v => v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : fmt(v);
+
+// ── Tabela ────────────────────────────────────────────────────
+function filtrados() {
+  const b = estado.busca.trim().toLowerCase();
+  return DATA.ops.filter(o =>
+    (!estado.soAtivos || o.total > 0) &&
+    (!estado.turno || o.turno === estado.turno) &&
+    (!b || o.nome.toLowerCase().includes(b) || o.id.toLowerCase().includes(b)));
+}
+
+function ordenar(lista) {
+  const s = estado.sort, dir = estado.dir;
+  const val = o => s === 'nome' ? o.nomeFmt : s === 'turno' ? o.turno :
+    s.startsWith('h') ? o.h[Number(s.slice(1))] : o[s];
+  return lista.slice().sort((a, b) => {
+    const va = val(a), vb = val(b);
+    if (typeof va === 'string') return va.localeCompare(vb, 'pt-BR') * dir;
+    return (va - vb) * dir || b.total - a.total;
+  });
+}
+
+function renderTabela() {
+  const d = DATA;
+  const lista = ordenar(filtrados());
+  const th = (key, label, cls) => '<th class="' + (cls || '') + (estado.sort === key ? ' sorted' : '') +
+    '" onclick="ordenarPor(\'' + key + '\')">' + label + (estado.sort === key ? (estado.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
+  document.getElementById('thead').innerHTML = '<tr><th>#</th>' +
+    th('nome', 'Operador', 'l') + th('total', 'Total') + th('uph', 'UPH') + th('horasMeta', 'Na meta') + th('horasAtivas', 'Horas') +
+    d.horas.map((hr, k) => th('h' + k, hr.slice(0, 2) + 'h')).join('') + '</tr>';
+
+  document.getElementById('countOps').textContent = '(' + lista.length + ')';
+  if (!lista.length) {
+    document.getElementById('tbody').innerHTML = '<tr><td class="vazio" colspan="' + (6 + d.horas.length) + '">Nenhum operador encontrado</td></tr>';
+    document.getElementById('tfoot').innerHTML = '';
+    return;
+  }
+
+  document.getElementById('tbody').innerHTML = lista.map((o, i) => {
+    const cels = o.h.map(v => {
+      if (!v) return '<td class="hc zero">·</td>';
+      return '<td class="hc c-' + stOp(v) + '" title="' + Math.round(v / META_OP_HORA * 100) + '% da meta de ' + META_OP_HORA + '/h">' + fmt(v) + '</td>';
+    }).join('');
+    return '<tr><td class="rank">' + (i + 1) + '</td>' +
+      '<td class="l nome">' + esc(o.nomeFmt) + '<small>' + esc(o.id) + '</small></td>' +
+      '<td class="tot num">' + fmt(o.total) + '</td>' +
+      '<td class="num t-' + (o.uph ? stOp(o.uph) : '') + '">' + (o.uph ? fmt(o.uph) : '—') + '</td>' +
+      '<td class="num">' + o.horasMeta + '/' + o.horasAtivas + '</td>' +
+      '<td class="num">' + o.horasAtivas + '</td>' + cels + '</tr>';
+  }).join('');
+
+  const somaH = d.horas.map((_, k) => lista.reduce((a, o) => a + o.h[k], 0));
+  const tot = lista.reduce((a, o) => a + o.total, 0);
+  const horasOp = lista.reduce((a, o) => a + o.horasAtivas, 0);
+  document.getElementById('tfoot').innerHTML = '<tr><td></td><td class="l">Total (' + lista.length + ')</td>' +
+    '<td class="tot num">' + fmt(tot) + '</td><td class="num">' + (horasOp ? fmt(tot / horasOp) : '—') + '</td><td class="num">' + fmt(lista.reduce((a, o) => a + o.horasMeta, 0)) + '/' + fmt(horasOp) + '</td><td class="num">' + fmt(horasOp) + '</td>' +
+    somaH.map(v => '<td class="hc">' + (v ? fmt(v) : '·') + '</td>').join('') + '</tr>';
+}
+
+function trocarAba(aba) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.aba === aba));
+  document.querySelectorAll('.aba').forEach(el => { el.hidden = el.id !== 'aba-' + aba; });
+  try { localStorage.setItem('prodAba', aba); } catch (e) {}
+  if (aba === 'geral' && DATA) { renderKpis(); renderChart(); }   // gráficos medem a largura ao desenhar
+}
+
+function ordenarPor(key) {
+  if (estado.sort === key) estado.dir = -estado.dir;
+  else { estado.sort = key; estado.dir = (key === 'nome' || key === 'turno') ? 1 : -1; }
+  renderTabela();
+}
+
+// ── Controles ─────────────────────────────────────────────────
+quandoPronto(() => {
+  document.querySelectorAll('#chipsTurno .chip').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('#chipsTurno .chip').forEach(b => b.classList.toggle('active', b === btn));
+    estado.turno = btn.dataset.t;
+    if (DATA) renderTabela();
+  }));
+  document.querySelectorAll('#selTurno button').forEach(btn => btn.addEventListener('click', () => {
+    estado.chartTurno = btn.dataset.t;      // vale para o anel "% da meta" e para o gráfico
+    if (DATA) { renderKpis(); renderChart(); }
+  }));
+  try { const a = localStorage.getItem('prodAba'); if (a === 'ops') trocarAba('ops'); } catch (e) {}
+  // Redesenha os gráficos quando o espaço deles muda de tamanho (carga da página, menu, janela, zoom)
+  let tmr, ultimaLarg = 0;
+  const redesenhar = () => { clearTimeout(tmr); tmr = setTimeout(() => { if (DATA) { renderKpis(); renderChart(); } }, 120); };
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      const w = document.getElementById('chart').clientWidth;
+      if (w && Math.abs(w - ultimaLarg) > 2) { ultimaLarg = w; redesenhar(); }
+    }).observe(document.getElementById('chart'));
+  }
+  window.addEventListener('resize', redesenhar);
+  document.getElementById('busca').addEventListener('input', e => { estado.busca = e.target.value; if (DATA) renderTabela(); });
+  document.getElementById('chkAtivos').addEventListener('change', e => { estado.soAtivos = e.target.checked; if (DATA) renderTabela(); });
+  carregar();
+  setInterval(carregar, POLL_MS);
+});
+</script>

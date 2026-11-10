@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Produtividade por Operador · <?= unidade ?></title>
+<?!= include('Styles'); ?>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gRing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="app">
+  <!-- Menu lateral -->
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">&#x26A1;</div>
+      <div class="brand-txt"><b>Produtividade</b><small>SPX &middot; <?= unidade ?></small></div>
+    </div>
+    <nav class="nav">
+      <button class="nav-btn active" data-aba="geral" onclick="trocarAba('geral')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>
+        <span>Vis&atilde;o geral</span>
+      </button>
+      <button class="nav-btn" data-aba="ops" onclick="trocarAba('ops')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 14.6c2.6.2 4.4 1.9 5 5.4"/></svg>
+        <span>Operadores</span>
+      </button>
+    </nav>
+    <div class="side-foot">
+      <div class="live"><span class="live-dot" id="liveDot"></span><span id="lastUpdated">Aguardando...</span></div>
+      <div class="janela" id="metaTag">&mdash;</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div>
+        <h1>Produtividade por Operador &middot; <?= unidade ?></h1>
+        <p>Produ&ccedil;&atilde;o hora a hora &middot; meta de 500 por operador/hora</p>
+      </div>
+      <div class="top-right">
+        <div class="turno-sel" id="selTurno" role="group" aria-label="Escolher turno">
+          <button data-t="T1" title="06:00 &ndash; 13:59">T1</button>
+          <button data-t="T2" title="14:00 &ndash; 21:59">T2</button>
+          <button data-t="T3" title="22:00 &ndash; 05:59">T3</button>
+        </div>
+        <span class="agora" id="turnoAtual">&mdash;</span>
+        <button class="theme-btn" id="themeBtn" title="Alternar modo claro/escuro" onclick="toggleTheme()">&#x2600;&#xFE0F;</button>
+      </div>
+    </header>
+
+    <div id="erro" class="erro" hidden></div>
+
+    <!-- ═══ VISÃO GERAL ═══ -->
+    <section class="aba" id="aba-geral">
+      <div class="row-bottom">
+        <div class="spark-col">
+          <div class="card ring-card">
+            <div class="ring" id="ringMeta"></div>
+            <div class="ring-lbl" id="ringMetaLbl">da meta do turno</div>
+            <div class="ring-sub" id="ringMetaSub">&nbsp;</div>
+          </div>
+          <div class="card spark-card">
+            <div class="spark-head">
+              <div class="badge">&Sigma;</div>
+              <div><b id="sTotal">&mdash;</b><small>unidades produzidas no dia</small></div>
+            </div>
+            <div class="spark" id="sparkProd"></div>
+            <div class="spark-foot" id="sPico">&nbsp;</div>
+          </div>
+          <div class="card spark-card">
+            <div class="spark-head">
+              <div class="badge b2">OP</div>
+              <div><b id="sOps">&mdash;</b><small id="sOpsSub">operadores com produ&ccedil;&atilde;o</small></div>
+            </div>
+            <div class="spark" id="sparkOps"></div>
+            <div class="spark-foot" id="sMedia">&nbsp;</div>
+          </div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="card-head">
+            <h2>Produ&ccedil;&atilde;o por hora &times; meta</h2>
+            <div class="ph-resumo" id="phResumo"></div>
+          </div>
+          <div class="ph-chart" id="chart"></div>
+          <div class="ph-legend">
+            <span><i class="dot ok"></i>&ge; 100% da meta</span>
+            <span><i class="dot mid"></i>80&ndash;99%</span>
+            <span><i class="dot bad"></i>&lt; 80%</span>
+            <span><i class="mark"></i>meta da hora</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ OPERADORES ═══ -->
+    <section class="aba" id="aba-ops" hidden>
+      <div class="card">
+        <div class="card-head">
+          <h2>Operadores <span class="count" id="countOps"></span></h2>
+          <div class="toolbar">
+            <div class="chips" id="chipsTurno">
+              <button class="chip active" data-t="">Todos</button>
+              <button class="chip" data-t="T1">T1</button>
+              <button class="chip" data-t="T2">T2</button>
+              <button class="chip" data-t="T3">T3</button>
+            </div>
+            <label class="check"><input type="checkbox" id="chkAtivos" checked> s&oacute; com produ&ccedil;&atilde;o</label>
+            <div class="search-wrap">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input type="text" id="busca" placeholder="Buscar operador ou Ops ID">
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="tbl" id="tbl">
+            <thead id="thead"></thead>
+            <tbody id="tbody"></tbody>
+            <tfoot id="tfoot"></tfoot>
+          </table>
+        </div>
+        <p class="nota">Meta por operador: <b>500 por hora</b>. C&eacute;lula e UPH: verde &ge; 500 &middot; amarelo 400&ndash;499 &middot; vermelho &lt; 400. Na meta = horas com 500 ou mais &divide; horas com produ&ccedil;&atilde;o. Filtro de turno = turno em que o operador mais produziu. Clique no cabe&ccedil;alho para ordenar.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<?!= include('JavaScript'); ?>
+</body>
+</html>

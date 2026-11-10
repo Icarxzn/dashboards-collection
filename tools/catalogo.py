@@ -57,6 +57,10 @@ PROJETOS = [
      "sheet_id": "1fB_CvpryMOy0ZhMLqW1LgJNhkvIKiZqn7k_fstKRJCU", "sheet_nome": "Stage IN - Performace",
      "script_id": "1K3DwOj1bT43k0y4OzUkkVJTmVC_oYXoEazkJcEUC1VgnB7ld0OjD_ybg",
      "deploy_id": "AKfycbymhO0ljXXcgPygiGrbvtjxC0_1kPpPA49hY8Acf18XSHM_OKHcHlkwfQoC7KA3_U7h"},
+    {"dash": "08-produtividade-operadores", "unidade": "pe2", "nome": "Produtividade por Operador",
+     "sheet_id": "1ro9a0FBqqtAetLoNS_8M885Dudw1f84jxUa_rI8FYNs", "sheet_nome": "Produtividade PE2",
+     "script_id": "1O09ck43G7a2siM6LCexaQ36CocbAkUisvOSZJy9H5nnhLBD7B-owZEbb",
+     "deploy_id": "AKfycbwLQS99GJ8_YhL1JKLwBk7SFyp7owKGzlQElT1GklpNjACbgms_EXZh4oJBb6iafk8J"},
 ]
 
 # Planilhas usadas fora dos web apps
