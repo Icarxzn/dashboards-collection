@@ -1,0 +1,394 @@
+<script>
+ 
+(function () {
+'use strict';
+
+var D = null, CH = {};
+var SH = { T1: [6, 7, 8, 9, 10, 11, 12, 13], T2: [14, 15, 16, 17, 18, 19, 20, 21], T3: [22, 23, 0, 1, 2, 3, 4, 5] };
+var ORDER = SH.T1.concat(SH.T2, SH.T3);
+var TURNO_COLOR = { T1: 'var(--sh1)', T2: 'var(--sh2)', T3: 'var(--sh3)' };
+var firstDone = false;
+var S = { date: null, turno: 'ALL', sort: 'total', q: '', shown: 25 };
+
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+var fmt = function (n) { return Number(n || 0).toLocaleString('pt-BR'); };
+var fmt1 = function (n) { return Number(n || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 }); };
+var pct = function (a, b) { return b > 0 ? Math.round(a / b * 100) : 0; };
+var ic = function (id) { return '<svg class="ic"><use href="#i-' + id + '"/></svg>'; };
+var cssv = function (n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); };
+var p2 = function (n) { return ('0' + n).slice(-2); };
+var hh = function (h) { return p2(h) + ':00'; };
+function fmtDate(d) { var a = d.split('-'); return a[2] + '/' + a[1] + '/' + a[0]; }
+function fmtDay(d) { var a = d.split('-'); return a[2] + '/' + a[1]; }
+function ymd(dt) { return dt.getFullYear() + '-' + p2(dt.getMonth() + 1) + '-' + p2(dt.getDate()); }
+
+function opToday() { var d = new Date(); if (d.getHours() < 6) d.setDate(d.getDate() - 1); return ymd(d); }
+function opYesterday() { var d = new Date(); d.setDate(d.getDate() - (d.getHours() < 6 ? 2 : 1)); return ymd(d); }
+function shiftOf(h) { return h >= 6 && h < 14 ? 'T1' : h >= 14 && h < 22 ? 'T2' : 'T3'; }
+function hoursOf(t) { return t === 'ALL' ? ORDER : SH[t]; }
+function hourStart(day, hour) { var a = day.split('-'); return new Date(+a[0], +a[1] - 1, +a[2] + (hour < 6 ? 1 : 0), hour, 0, 0).getTime(); }
+function lvlColor(p) { return p == null ? 'var(--muted)' : p >= 100 ? 'var(--ok)' : p >= 85 ? 'var(--open)' : 'var(--late)'; }
+function dates() { var m = {}; Object.keys(D.prod).forEach(function (d) { m[d] = 1; }); return Object.keys(m).sort(); }
+
+ 
+
+function hourRows(day, turno) {
+  var ops = D.prod[day] || [], plan = D.plan[day] || {}, now = Date.now();
+  return hoursOf(turno).map(function (h) {
+    var real = 0; ops.forEach(function (o) { real += o.h[h] || 0; });
+    var meta = plan[h] != null && plan[h] > 0 ? plan[h] : null, s = hourStart(day, h), ended = s + 36e5 <= now, started = s <= now;
+    return { h: h, tr: shiftOf(h), real: real, meta: meta, started: started, ended: ended, live: started && !ended, ev: meta != null && ended };
+  });
+}
+function agg(rows) {
+  var o = { real: 0, meta: 0, evReal: 0, evMeta: 0, evN: 0, hit: 0, noMeta: 0, best: null };
+  rows.forEach(function (r) {
+    o.real += r.real;
+    if (r.meta != null) o.meta += r.meta;
+    if (r.ev) { o.evReal += r.real; o.evMeta += r.meta; o.evN++; if (r.real >= r.meta) o.hit++; }
+    if (r.meta == null && r.ended && r.real > 0) o.noMeta++;
+    if (r.real > 0 && (!o.best || r.real > o.best.real)) o.best = r;
+  });
+  o.p = o.evMeta > 0 ? o.evReal / o.evMeta * 100 : null;
+  return o;
+}
+
+function people(day, turno) {
+  var hs = hoursOf(turno), out = [];
+  (D.prod[day] || []).forEach(function (o) {
+    var tot = 0, act = 0, tr = {};
+    hs.forEach(function (h) { var v = o.h[h] || 0; if (v > 0) { tot += v; act++; tr[shiftOf(h)] = 1; } });
+    if (tot > 0) out.push({ id: o.id, n: o.n, h: o.h, tot: tot, act: act, avg: tot / act, tr: Object.keys(tr).sort() });
+  });
+  return out;
+}
+function teamAvg(ppl) { var t = 0, a = 0; ppl.forEach(function (p) { t += p.tot; a += p.act; }); return a ? t / a : 0; }
+
+ 
+function categoryBar(parts) {
+  var t = parts.reduce(function (s, p) { return s + p.v; }, 0) || 1;
+  return '<div class="mini-b">' + parts.map(function (p) { return p.v ? '<i style="width:' + (p.v / t * 100) + '%;background:' + p.c + '"></i>' : ''; }).join('') + '</div>';
+}
+function tracker(days) { return '<div class="trkr">' + days.map(function (d) { return '<i title="' + esc(d.t) + '" style="background:' + d.c + '"></i>'; }).join('') + '</div>'; }
+function badge(t, c) { return '<span class="badge" style="--c:' + c + '">' + esc(t) + '</span>'; }
+function kt(icon, label, val, sub, color) {
+  return '<div class="kt" style="--k:' + color + '"><span class="kc-t">' + ic(icon) + label + '</span><span class="kt-v" style="color:' + color + '">' + (typeof val === 'number' ? fmt(val) : val) + '</span><span class="kt-s">' + sub + '</span></div>';
+}
+function spark(o, hs, mx) {
+  var w = 5, g = 2, H = 22;
+  return '<svg class="spk" viewBox="0 0 ' + hs.length * (w + g) + ' ' + H + '" width="' + hs.length * (w + g) + '" height="' + H + '" aria-hidden="true">' + hs.map(function (h, i) {
+    var v = o.h[h] || 0, bh = v > 0 ? Math.max(2, v / mx * H) : 1;
+    return '<rect x="' + i * (w + g) + '" y="' + (H - bh) + '" width="' + w + '" height="' + bh + '" rx="1.5" fill="' + (v > 0 ? TURNO_COLOR[shiftOf(h)] : 'var(--border-s)') + '"><title>' + hh(h) + ' · ' + fmt(v) + '</title></rect>';
+  }).join('') + '</svg>';
+}
+
+ 
+function render() {
+  var rows = hourRows(S.date, S.turno), a = agg(rows), ppl = people(S.date, S.turno), ds = dates();
+  var tl = S.turno === 'ALL' ? 'todos os turnos' : 'turno ' + S.turno;
+  $('#heroSub').textContent = fmt(a.real) + ' peças · ' + fmtDate(S.date) + ' · ' + (S.turno === 'ALL' ? 'todos os turnos' : S.turno) + ' · ' + ppl.length + ' colaboradores';
+  $('#resumoSub').textContent = fmtDate(S.date) + ' · ' + tl;
+  $('#art0').textContent = a.real ? fmt(a.real) : '—';
+  $('#art1').textContent = a.meta ? fmt(a.meta) : '—';
+  $('#art2').textContent = a.p == null ? '—' : Math.round(a.p) + '%';
+  $('#art3').textContent = fmt(ppl.length);
+  renderFilters(ds);
+  renderPanorama(rows, a, ppl, ds);
+  renderShifts();
+  renderHour(rows, a);
+  renderEvo(ds);
+  renderPeople(ppl);
+  if (!firstDone) { firstDone = true; setTimeout(reveal, 30); }
+}
+
+function renderFilters(ds) {
+  var opts = ds.slice().reverse().map(function (d) { return '<option value="' + d + '"' + (d === S.date ? ' selected' : '') + '>' + fmtDate(d) + (d === opToday() ? ' ★' : '') + '</option>'; }).join('');
+  var seg = function (arr, cur, act) { return arr.map(function (x) { return '<button data-act="' + act + '" data-v="' + x[0] + '" aria-pressed="' + (cur === x[0]) + '">' + x[1] + '</button>'; }).join(''); };
+  var quick = S.date === opToday() ? 'today' : S.date === opYesterday() ? 'yest' : '';
+  $('#filters').innerHTML =
+    '<div class="fld"><span class="l">Período</span><div class="seg">' + seg([['today', 'Hoje'], ['yest', 'Ontem']], quick, 'quick') + '</div></div>' +
+    '<div class="fld"><label for="selDate">Data</label><label class="select"><svg class="ic"><use href="#i-cal"/></svg><select id="selDate" data-chg="date">' + opts + '</select></label></div>' +
+    '<div class="fld"><span class="l">Turno</span><div class="seg">' + seg([['ALL', 'Todos'], ['T1', 'T1'], ['T2', 'T2'], ['T3', 'T3']], S.turno, 'turno') + '</div></div>';
+}
+
+function renderPanorama(rows, a, ppl, ds) {
+  var RV = firstDone ? 'rv in' : 'rv', lc = lvlColor(a.p);
+  var idx = ds.indexOf(S.date), win = ds.slice(Math.max(0, idx - 13), idx + 1);
+  var days = win.map(function (d) {
+    var s = agg(hourRows(d, S.turno));
+    return { t: fmtDay(d) + ' · ' + (s.p == null ? 'sem meta' : Math.round(s.p) + '% da meta') + ' · ' + fmt(s.real) + ' peças', c: !s.real && s.p == null ? 'var(--surface2)' : s.p == null ? 'var(--t-safe)' : lvlColor(s.p) };
+  });
+  var byT = ['T1', 'T2', 'T3'].map(function (t) { return { t: t, v: agg(hourRows(S.date, t)).real }; });
+  var tur = byT.map(function (x) {
+    return '<div class="hb"><span style="color:' + TURNO_COLOR[x.t] + ';font-weight:700">' + x.t + '</span><span class="bar"><i style="width:' + pct(x.v, a.real && S.turno === 'ALL' ? a.real : byT.reduce(function (s, y) { return s + y.v; }, 0)) + '%;background:' + TURNO_COLOR[x.t] + '"></i></span><b>' + fmt(x.v) + '</b></div>';
+  }).join('');
+  var gap = a.evMeta ? a.evReal - a.evMeta : 0;
+
+  $('#k3').innerHTML =
+    '<div class="kc ' + RV + '" style="--k:var(--brand)"><div class="kc-h"><span class="kc-t">' + ic('package') + 'Produção real</span><span class="st" style="--k:var(--brand)">' + ppl.length + ' colaboradores</span></div>' +
+      '<div class="kc-big">' + (a.real ? fmt(a.real) : '—') + '</div><div class="kc-sub">aba Consulta · <b>' + (ppl.length ? fmt(Math.round(a.real / ppl.length)) : 0) + '</b> por colaborador</div>' +
+      '<div class="mini">' + tur + '</div></div>' +
+    '<div class="kc ' + RV + '" style="--k:var(--c-dup)"><div class="kc-h"><span class="kc-t">' + ic('target') + 'Meta</span><span class="st" style="--k:var(--c-dup)">aba Plano</span></div>' +
+      '<div class="kc-big">' + (a.meta ? fmt(a.meta) : '—') + '</div><div class="kc-sub">' + (a.meta ? 'meta das horas fechadas: <b>' + fmt(a.evMeta) + '</b> · real nelas: <b>' + fmt(a.evReal) + '</b>' : 'Sem meta cadastrada na aba Plano para este filtro') + '</div>' +
+      '<div class="mini">' + (a.evMeta ? categoryBar([{ v: Math.min(a.evReal, a.evMeta), c: 'var(--ok)' }, { v: Math.max(a.evMeta - a.evReal, 0), c: 'var(--late)' }, { v: Math.max(a.evReal - a.evMeta, 0), c: 'var(--c-dup)' }]) +
+        '<div class="mini-l"><span><i style="background:var(--ok)"></i>Dentro da meta</span><span><i style="background:var(--late)"></i>Faltou</span><span><i style="background:var(--c-dup)"></i>Acima</span></div>' : '') + '</div></div>' +
+    '<div class="kc ' + RV + '" style="--k:' + lc + '"><div class="kc-h"><span class="kc-t">' + ic('gauge') + 'Atingimento</span><span class="st" style="--k:' + lc + '">' + (a.p == null ? 'sem meta' : a.p >= 100 ? 'meta batida' : a.p >= 85 ? 'quase lá' : 'abaixo') + '</span></div>' +
+      '<div class="kc-big" style="color:' + lc + '">' + (a.p == null ? '—' : Math.round(a.p) + '%') + '</div><div class="kc-sub">' + (a.p == null ? 'nenhuma hora fechada com meta' : (gap >= 0 ? '<b>+' + fmt(gap) + '</b> acima' : '<b>' + fmt(gap) + '</b> abaixo') + ' da meta nas <b>' + a.evN + '</b> horas fechadas') + '</div>' +
+      '<div class="mini"><div class="kc-sub xs">Últimos 14 dias</div>' + tracker(days) + '</div></div>';
+
+  var avg = ppl.length ? teamAvg(ppl) : 0;
+  $('#k5').innerHTML =
+    kt('users', 'Colaboradores', ppl.length, 'com produção neste filtro', 'var(--c-dup)') +
+    kt('trend', 'Média por hora', fmt(Math.round(avg)), 'peças por colaborador-hora ativa', 'var(--brand)') +
+    kt('clock', 'Melhor hora', a.best ? hh(a.best.h) : '—', a.best ? fmt(a.best.real) + ' peças' : 'sem produção', 'var(--ok)') +
+    kt('check', 'Horas na meta', a.evN ? a.hit + ' de ' + a.evN : '—', a.evN ? pct(a.hit, a.evN) + '% das horas fechadas com meta' : 'sem horas avaliadas', a.evN ? lvlColor(pct(a.hit, a.evN)) : 'var(--muted)') +
+    kt('alert', 'Horas sem meta', a.noMeta, a.noMeta ? 'produziram mas não têm meta na aba Plano' : 'todas com meta', a.noMeta ? 'var(--open)' : 'var(--ok)');
+}
+
+function renderShifts() {
+  var dayLive = S.date === opToday();
+  var cards = ['T1', 'T2', 'T3'].map(function (t) {
+    var rows = hourRows(S.date, t), a = agg(rows), ppl = people(S.date, t), lc = lvlColor(a.p), live = rows.some(function (r) { return r.live; });
+    var started = rows.some(function (r) { return r.started; }), allEnded = rows.every(function (r) { return r.ended; });
+    var tag = live ? '<span class="tag now">em andamento</span>' : !started ? '<span class="tag">não iniciado</span>' : allEnded ? '<span class="tag">encerrado</span>' : '<span class="tag now">em andamento</span>';
+    var ev = rows.filter(function (r) { return r.ev; });
+    var lamps = rows.map(function (r) { return '<i' + (r.ev ? '' : '') + ' title="' + hh(r.h) + '" style="--lc:' + (r.ev ? lvlColor(pct(r.real, r.meta)) : r.live ? 'var(--brand)' : 'var(--t-safe)') + '" class="' + (r.ev || r.live ? 'on' : '') + '"></i>'; }).join('');
+    return '<button class="fz" style="--lv:' + (a.p == null ? TURNO_COLOR[t] : lc) + '" data-act="turno" data-v="' + t + '" aria-pressed="' + (S.turno === t) + '">' +
+      '<div class="fz-top"><span class="fz-n" style="color:' + TURNO_COLOR[t] + '">' + t + '</span><span class="fz-w">' + hh(SH[t][0]) + '–' + hh((SH[t][SH[t].length - 1] + 1) % 24) + '</span>' + tag + '</div>' +
+      '<div class="fz-rate">' + (a.p == null ? '—' : Math.round(a.p) + '%') + '</div><div class="fz-lbl">' + (a.p == null ? 'sem meta avaliada' : a.p >= 100 ? 'meta batida' : a.p >= 85 ? 'quase lá' : 'abaixo da meta') + '</div>' +
+      '<div class="fz-sub"><b>' + fmt(a.real) + '</b> peças · meta <b>' + (a.meta ? fmt(a.meta) : '—') + '</b> · <b>' + ppl.length + '</b> colaboradores · média <b>' + fmt(Math.round(teamAvg(ppl))) + '</b>/h</div>' +
+      '<div class="lamps8">' + lamps + '</div></button>';
+  }).join('');
+  $('#shifts').innerHTML = cards;
+}
+
+ 
+function chartBase() {
+  var txt = cssv('--muted'), grid = document.documentElement.dataset.theme === 'light' ? 'rgba(20,24,40,.07)' : 'rgba(255,255,255,.06)';
+  Chart.defaults.font.family = "'Inter', system-ui, sans-serif"; Chart.defaults.color = txt;
+  return { txt: txt, grid: grid };
+}
+function fmtK(v) { return v >= 10000 ? Math.round(v / 1000) + 'k' : v >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + 'k' : String(v); }
+function renderHour(rows, a) {
+  var cb = chartBase(), ok = cssv('--ok'), mid = cssv('--open'), bad = cssv('--late'), neu = cssv('--t-safe'), brand = cssv('--brand'), txt = cssv('--text'), mut = cssv('--muted');
+  var colorOf = function (r) { return r.live ? brand : r.ev ? (r.real >= r.meta ? ok : r.real >= r.meta * .85 ? mid : bad) : neu; };
+  var pctOf = function (r) { return r.meta != null && r.started ? Math.round(r.real / r.meta * 100) : null; };
+  var mx = Math.max.apply(null, rows.map(function (r) { return Math.max(r.real, r.meta || 0); }).concat([1])), tick = mx * .007;
+  $('#horasSub').textContent = fmtDate(S.date) + ' · ' + (S.turno === 'ALL' ? 'todos os turnos' : S.turno);
+  $('#hCh').style.minWidth = rows.length * 46 + 'px';   
+  if (CH.hora) CH.hora.destroy();
+  var surf = cssv('--surface'), light = document.documentElement.dataset.theme === 'light';
+  
+  var rail = { id: 'rail', beforeDatasetsDraw: function (chart) {
+    var ctx = chart.ctx, A = chart.chartArea, bars = chart.getDatasetMeta(0).data, w = Math.min(A.width / rows.length * .88, 92);
+    ctx.save();
+    rows.forEach(function (r, i) {
+      if (!bars[i]) return;
+      ctx.beginPath(); ctx.roundRect(bars[i].x - w / 2, A.top, w, A.bottom - A.top, Math.min(18, w / 2));
+      ctx.fillStyle = r.live ? 'rgba(255,106,43,.11)' : light ? 'rgba(20,24,40,.035)' : 'rgba(255,255,255,.035)'; ctx.fill();
+      if (r.live) { ctx.strokeStyle = 'rgba(255,106,43,.45)'; ctx.lineWidth = 1; ctx.stroke(); }
+    });
+    ctx.restore();
+  } };
+  var topLabels = { id: 'topLabels', afterDatasetsDraw: function (chart) {
+    var ctx = chart.ctx, bars = chart.getDatasetMeta(0).data, y = chart.scales.y, narrow = chart.width / rows.length < 58;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    rows.forEach(function (r, i) {
+      var b = bars[i]; if (!b || !r.started) return;   
+      var top = b.y, p = pctOf(r);
+      if (r.meta != null) {   
+        var my = y.getPixelForValue(r.meta);
+        ctx.font = '600 ' + (narrow ? 10 : 11) + 'px Inter, sans-serif'; ctx.fillStyle = mut;
+        ctx.fillText(narrow ? fmtK(r.meta) : fmt(r.meta), b.x, my - 9);
+        top = Math.min(top, my - 24);
+      }
+      ctx.font = '700 ' + (narrow ? 11 : 13) + 'px Inter, sans-serif'; ctx.fillStyle = txt;
+      ctx.fillText(r.real > 0 ? (narrow ? fmtK(r.real) : fmt(r.real)) : '0', b.x, top - 6);
+      if (r.live) { ctx.font = '700 10px Inter, sans-serif'; ctx.fillStyle = brand; ctx.fillText('EM CURSO', b.x, top - (narrow ? 20 : 22)); }
+      else if (p != null) { ctx.font = '700 ' + (narrow ? 10 : 11) + 'px Inter, sans-serif'; ctx.fillStyle = colorOf(r); ctx.fillText(p + '%', b.x, top - (narrow ? 20 : 22)); }
+    });
+    ctx.restore();
+  } };
+  CH.hora = new Chart($('#chHora'), { type: 'bar', plugins: [rail, topLabels], data: {
+    labels: rows.map(function (r) { return hh(r.h); }),
+    datasets: [
+      { label: 'Real', data: rows.map(function (r) { return r.real; }), borderRadius: 12, borderSkipped: false, backgroundColor: rows.map(function (r) { return colorOf(r) + '40'; }), borderColor: rows.map(colorOf), borderWidth: 2, barPercentage: .62, categoryPercentage: .9, maxBarThickness: 62, order: 2 },
+      { type: 'line', label: 'Meta', data: rows.map(function (r) { return r.meta; }), borderColor: txt, borderWidth: 2.5, tension: .4, cubicInterpolationMode: 'monotone', borderCapStyle: 'round', borderJoinStyle: 'round',
+        pointRadius: 4.5, pointHoverRadius: 5, pointBackgroundColor: surf, pointBorderColor: txt, pointBorderWidth: 2, spanGaps: false, fill: false, order: 1 }
+    ] }, options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 4 } },
+    plugins: { legend: { display: false }, tooltip: { filter: function (i) { return i.datasetIndex === 0; }, displayColors: false, callbacks: {
+      title: function (it) { return rows[it[0].dataIndex] ? hh(rows[it[0].dataIndex].h) + ' · ' + rows[it[0].dataIndex].tr : ''; },
+      label: function (c) { var r = rows[c.dataIndex], p = pctOf(r); return ['Real: ' + fmt(r.real), 'Meta: ' + (r.meta != null ? fmt(r.meta) : 'sem meta'), p != null ? 'Atingimento: ' + p + '%' + (r.live ? ' (hora em curso)' : '') : '']; } } } },
+    scales: { x: { grid: { display: false }, border: { display: false }, ticks: { font: { size: 11, weight: 600 }, maxRotation: 0, autoSkip: false, padding: 6, color: function (c) { var r = rows[c.index]; return r && r.live ? brand : mut; } } },
+      y: { beginAtZero: true, suggestedMax: mx * 1.32, grid: { color: cb.grid }, border: { display: false }, ticks: { color: mut, font: { size: 10 }, maxTicksLimit: 5, callback: function (v) { return fmtK(v); } } } } } });
+  $('#legHora').innerHTML = '<span><i style="background:' + ok + '"></i>Bateu a meta</span><span><i style="background:' + mid + '"></i>85–99%</span><span><i style="background:' + bad + '"></i>Abaixo de 85%</span><span><i style="background:' + brand + '"></i>Hora em curso</span><span><i style="background:' + neu + '"></i>Sem meta</span><span><i style="background:var(--text);width:18px;height:3px;border-radius:2px"></i>Linha = meta (valor em cada ponto)</span>';
+
+  var any = rows.some(function (r) { return r.real > 0 || r.meta != null; });
+  $('#hourTbl').innerHTML = !any ? '<div class="empty">' + ic('layers') + '<p>Sem produção nem meta neste filtro.</p></div>' :
+    '<div class="tbl-scroll"><table class="tbl"><thead><tr><th>Hora</th><th>Turno</th><th class="num-r">Meta</th><th class="num-r">Real</th><th class="num-r">Atingimento</th><th class="num-r">Diferença</th><th>Situação</th></tr></thead><tbody>' +
+    rows.map(function (r) {
+      var p = r.meta ? Math.round(r.real / r.meta * 100) : null, c = r.ev ? lvlColor(p) : 'var(--muted)';
+      var st = r.live ? badge('Em curso', 'var(--brand)') : !r.started ? badge('Futura', 'var(--muted)') : r.meta == null ? badge('Sem meta', 'var(--t-safe)') : badge(p >= 100 ? 'Na meta' : p >= 85 ? 'Quase' : 'Abaixo', c);
+      var dif = r.meta != null && (r.ev || r.live) ? r.real - r.meta : null;
+      return '<tr><td class="mono num">' + hh(r.h) + '</td><td>' + badge(r.tr, TURNO_COLOR[r.tr]) + '</td><td class="num num-r' + (r.meta ? '' : ' z') + '">' + (r.meta ? fmt(r.meta) : '—') + '</td><td class="num num-r' + (r.real ? '' : ' z') + '">' + (r.real ? fmt(r.real) : '—') + '</td>' +
+        '<td class="num num-r" style="color:' + c + '">' + (p != null && r.started ? p + '%' : '—') + '</td><td class="num num-r" style="color:' + (dif == null ? 'var(--muted)' : dif >= 0 ? 'var(--ok)' : 'var(--late)') + '">' + (dif == null ? '—' : (dif > 0 ? '+' : '') + fmt(dif)) + '</td><td>' + st + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function renderEvo(ds) {
+  var cb = chartBase(), idx = ds.indexOf(S.date), win = ds.slice(Math.max(0, idx - 13), idx + 1), ag = win.map(function (d) { return agg(hourRows(d, S.turno)); });
+  var ok = cssv('--ok'), mid = cssv('--open'), bad = cssv('--late'), neu = cssv('--t-safe');
+  $('#evoCap').textContent = S.turno === 'ALL' ? 'todos os turnos' : 'turno ' + S.turno;
+  if (CH.evo) CH.evo.destroy();
+  CH.evo = new Chart($('#chEvo'), { type: 'bar', data: { labels: win.map(fmtDay), datasets: [
+    { label: 'Real', data: ag.map(function (x) { return x.real; }), borderRadius: 6, borderSkipped: false, order: 2, backgroundColor: ag.map(function (x) { return x.p == null ? neu : x.p >= 100 ? ok : x.p >= 85 ? mid : bad; }) },
+    { type: 'line', label: 'Meta', data: ag.map(function (x) { return x.meta || null; }), borderColor: cssv('--c-dup'), borderDash: [6, 4], borderWidth: 2, pointRadius: 3, pointBackgroundColor: cssv('--c-dup'), spanGaps: false, order: 1 }
+  ] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false }, ticks: { color: cb.txt, font: { size: 10 } } }, y: { beginAtZero: true, grid: { color: cb.grid }, ticks: { color: cb.txt, font: { size: 10 }, callback: function (v) { return fmt(v); } } } } } });
+  $('#legEvo').innerHTML = '<span><i style="background:' + ok + '"></i>Meta batida</span><span><i style="background:' + mid + '"></i>85–99%</span><span><i style="background:' + bad + '"></i>Abaixo</span><span><i style="background:' + neu + '"></i>Sem meta avaliada</span><span><i style="background:' + cssv('--c-dup') + '"></i>Meta (Plano)</span>';
+}
+
+ 
+function sorted(ppl) {
+  var q = S.q.trim().toLowerCase();
+  var arr = ppl.filter(function (p) { return !q || (p.n + ' ' + p.id).toLowerCase().indexOf(q) >= 0; });
+  arr.sort(function (a, b) { return S.sort === 'name' ? a.n.localeCompare(b.n, 'pt-BR') : S.sort === 'avg' ? b.avg - a.avg || b.tot - a.tot : b.tot - a.tot; });
+  return arr;
+}
+function rankList(id, title, sub, arr, valFn, metaFn, color) {
+  var mx = arr.length ? Math.max.apply(null, arr.map(valFn)) : 1;
+  $('#' + id).innerHTML = '<div class="card-h"><h3>' + title + '</h3><span class="muted xs">' + sub + '</span></div>' +
+    (arr.length ? '<div class="rows">' + arr.map(function (p, i) {
+      return '<button class="row" data-act="open" data-id="' + esc(p.id) + '"><span class="row-n"><span class="muted mono xs">' + (i + 1) + '</span> ' + esc(p.n) + '</span><span class="row-v">' + fmt(valFn(p)) + '</span>' +
+        '<span class="row-bar"><span class="stack"><i style="width:' + (valFn(p) / mx * 100) + '%;background:' + color(p) + '"></i></span></span><span class="row-m">' + metaFn(p) + '</span></button>';
+    }).join('') + '</div>' : '<div class="empty">' + ic('layers') + '<p>Sem dados para exibir</p></div>');
+}
+function renderPeople(ppl) {
+  var avg = teamAvg(ppl), hs = hoursOf(S.turno), mx = 1;
+  ppl.forEach(function (p) { hs.forEach(function (h) { if ((p.h[h] || 0) > mx) mx = p.h[h]; }); });
+  $('#pesSub').textContent = ppl.length + ' colaboradores · média da equipe ' + fmt(Math.round(avg)) + '/h';
+  var top = ppl.slice().sort(function (a, b) { return b.tot - a.tot; }).slice(0, 10);
+  rankList('rkTop', 'Maior produção', 'total no filtro', top, function (p) { return p.tot; },
+    function (p) { return '<b>' + fmt(Math.round(p.avg)) + '</b>/h em <b>' + p.act + '</b> h · ' + p.tr.join('/'); }, function () { return 'linear-gradient(90deg,var(--brand),var(--brand2))'; });
+  var low = ppl.filter(function (p) { return p.act >= 2 && p.avg < avg * .7; }).sort(function (a, b) { return a.avg - b.avg; }).slice(0, 10);
+  rankList('rkLow', 'Abaixo da média da equipe', 'média/h &lt; 70% da equipe (mín. 2 h)', low, function (p) { return Math.round(p.avg); },
+    function (p) { return '<b>' + pct(p.avg, avg) + '%</b> da média · total <b>' + fmt(p.tot) + '</b> em <b>' + p.act + '</b> h'; }, function () { return 'var(--late)'; });
+
+  var all = sorted(ppl), page = all.slice(0, S.shown);
+  document.querySelectorAll('#sortMode button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.v === S.sort); });
+  $('#listCount').textContent = fmt(all.length);
+  if (!all.length) { $('#list').innerHTML = '<div class="empty">' + ic('layers') + '<p>Nenhum colaborador neste filtro.</p></div>'; $('#more').innerHTML = ''; return; }
+  var rel = function (p) { return avg ? p.avg / avg : 0; }, rc = function (p) { return rel(p) >= 1 ? 'var(--ok)' : rel(p) >= .7 ? 'var(--open)' : 'var(--late)'; };
+  var tbl = '<div class="tbl-wrap"><div class="tbl-scroll"><table class="tbl"><thead><tr><th>#</th><th>Colaborador</th><th>Turno</th><th class="num-r">Horas</th><th class="num-r">Total</th><th class="num-r">Média/h</th><th>vs equipe</th><th>Por hora</th></tr></thead><tbody>' +
+    page.map(function (p, i) {
+      return '<tr class="rw" data-act="open" data-id="' + esc(p.id) + '"><td class="muted">' + (i + 1) + '</td><td><b>' + esc(p.n) + '</b><span class="name-s mono">' + esc(p.id) + '</span></td><td>' + p.tr.map(function (t) { return badge(t, TURNO_COLOR[t]); }).join(' ') + '</td>' +
+        '<td class="num num-r">' + p.act + '</td><td class="num num-r">' + fmt(p.tot) + '</td><td class="num num-r">' + fmt(Math.round(p.avg)) + '</td>' +
+        '<td style="min-width:120px"><span class="hb" style="grid-template-columns:1fr auto"><span class="bar"><i style="width:' + Math.min(rel(p) / 1.6 * 100, 100) + '%;background:' + rc(p) + '"></i></span><b style="color:' + rc(p) + '">' + Math.round(rel(p) * 100) + '%</b></span></td><td>' + spark(p, hs, mx) + '</td></tr>';
+    }).join('') + '</tbody></table></div></div>';
+  var cards = '<div class="cards">' + page.map(function (p) {
+    return '<button class="pk" style="--c:' + rc(p) + '" data-act="open" data-id="' + esc(p.id) + '"><div class="pk-1"><span class="pk-id"><b>' + esc(p.n) + '</b></span><span class="pk-cd">' + fmt(p.tot) + '</span></div>' +
+      '<div class="pk-2">' + p.tr.map(function (t) { return badge(t, TURNO_COLOR[t]); }).join('') + badge(Math.round(rel(p) * 100) + '% da equipe', rc(p)) + '</div>' +
+      '<div class="pk-3"><span><b>' + fmt(Math.round(p.avg)) + '</b>/h</span><span>' + p.act + ' h ativas</span><span class="mono">' + esc(p.id) + '</span></div>' + spark(p, hs, mx) + '</button>';
+  }).join('') + '</div>';
+  $('#list').innerHTML = tbl + cards;
+  $('#more').innerHTML = '<div class="pager"><span class="pg-info">Mostrando <b>' + page.length + '</b> de <b>' + fmt(all.length) + '</b></span>' + (all.length > page.length ? '<button class="btn-s" data-act="more">Mostrar mais</button>' : '') + '</div>';
+}
+
+ 
+function openSheet(id) {
+  var ppl = people(S.date, 'ALL'), p = ppl.filter(function (x) { return x.id === id; })[0];
+  if (!p) return;
+  var mx = Math.max.apply(null, ORDER.map(function (h) { return p.h[h] || 0; })) || 1, plan = D.plan[S.date] || {};
+  var inF = hoursOf(S.turno), fp = people(S.date, S.turno).filter(function (x) { return x.id === id; })[0] || { tot: 0, act: 0, avg: 0 };
+  $('#sheetT').textContent = p.n;
+  $('#sheetB').innerHTML =
+    '<dl class="kv"><dt>Ops ID</dt><dd class="mono">' + esc(p.id) + '</dd><dt>Dia operacional</dt><dd>' + fmtDate(S.date) + '</dd>' +
+    '<dt>Total no dia</dt><dd>' + fmt(p.tot) + '</dd><dt>Horas ativas no dia</dt><dd>' + p.act + '</dd><dt>Média por hora ativa</dt><dd>' + fmt(Math.round(p.avg)) + '</dd>' +
+    (S.turno !== 'ALL' ? '<dt>No ' + S.turno + '</dt><dd>' + fmt(fp.tot) + ' · ' + fmt(Math.round(fp.avg)) + '/h</dd>' : '') + '</dl>' +
+    '<div class="card-h"><h3>Hora a hora</h3><span class="muted xs">colunas por turno</span></div>' +
+    '<div class="hbars">' + ORDER.map(function (h) {
+      var v = p.h[h] || 0, m = plan[h];
+      return '<div class="hbar' + (inF.indexOf(h) < 0 ? ' dim' : '') + '" title="' + hh(h) + ' · ' + fmt(v) + '"><span class="hv">' + (v ? fmt(v) : '') + '</span><i style="height:' + (v ? Math.max(4, v / mx * 100) : 0) + '%;background:' + TURNO_COLOR[shiftOf(h)] + '"></i><span class="hl">' + p2(h) + '</span></div>';
+    }).join('') + '</div>';
+  $('#sheet').hidden = false; $('.sheet-p').focus();
+}
+
+ 
+function toast(msg) { var t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { t.classList.remove('on'); }, 2600); }
+function reveal() { document.querySelectorAll('.rv:not(.in)').forEach(function (e, i) { setTimeout(function () { e.classList.add('in'); }, i * 70); }); }
+function download(name, text, type) { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type })); a.download = name; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 500); }
+function csv() {
+  var hs = hoursOf(S.turno), q = function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+  var head = ['Dia operacional', 'Turno', 'Ops ID', 'Colaborador', 'Horas ativas', 'Total', 'Média/h'].concat(hs.map(hh));
+  var rows = sorted(people(S.date, S.turno)).map(function (p) {
+    return [S.date, S.turno === 'ALL' ? 'Todos' : S.turno, p.id, p.n, p.act, p.tot, Math.round(p.avg)].concat(hs.map(function (h) { return p.h[h] || 0; })).map(q).join(';');
+  });
+  download('produtividade_' + S.date + '_' + S.turno + '.csv', '﻿' + [head.map(q).join(';')].concat(rows).join('\n'), 'text/csv;charset=utf-8');
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $('#btnTheme use').setAttribute('href', t === 'dark' ? '#i-sun' : '#i-moon');
+  try { localStorage.setItem('prodturno-pe2-theme', t); } catch (e) {}
+  if (D) render();
+}
+
+ 
+function banner(msg, retry) { $('#banner').innerHTML = msg ? '<div class="bn err" role="alert">' + ic('alert') + '<span>' + esc(msg) + '</span>' + (retry ? '<button data-act="refresh">Tentar de novo</button>' : '') + '</div>' : ''; }
+function load(force) {
+  var btn = $('#btnRefresh'); btn.classList.add('spin');
+  google.script.run.withSuccessHandler(function (json) {
+    btn.classList.remove('spin'); banner('');
+    D = JSON.parse(json); window.__REFRESH = D.cfg.refreshSec;
+    var ds = dates();
+    if (!ds.length) { banner('A aba Consulta não tem produção para exibir.'); }
+    if (!S.date || ds.indexOf(S.date) < 0) S.date = ds.indexOf(opToday()) >= 0 ? opToday() : ds[ds.length - 1];
+    var m = D.stamp && D.stamp.match(/(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/);
+    $('#sync').innerHTML = '<span class="dot"></span><b>Planilha ' + (m ? m[1].slice(-5) : p2(new Date(D.generatedAt).getHours()) + ':' + p2(new Date(D.generatedAt).getMinutes())) + '</b>';
+    $('#heroEb').textContent = D.ledger ? 'Control Tower · histórico ativo' : 'Control Tower · só janela ao vivo';
+    $('#defs').innerHTML = defs();
+    if (ds.length) render(); if (force) toast('Dados atualizados');
+  }).withFailureHandler(function (e) {
+    btn.classList.remove('spin'); $('#sync').innerHTML = '<span class="dot stale"></span>Sem conexão';
+    banner('Não foi possível carregar a planilha: ' + (e && e.message || e), true);
+  }).getDashboardData(!!force);
+}
+function defs() {
+  return '<p><b>Turnos</b>: T1 06:00–13:59 · T2 14:00–21:59 · T3 22:00–05:59. O T3 pertence ao dia operacional em que começou (00–05h contam no dia anterior).</p>' +
+    '<p><b>Meta</b>: aba Plano, por data e hora (soma da capacidade de todas as esteiras; 00h–05h usam a data do dia operacional). Hora sem meta não entra no atingimento.</p>' +
+    '<p><b>Real</b>: aba Consulta, por colaborador e hora. A aba é uma janela de ~12 h que desliza; cada leitura é guardada na aba <b>_LEDGER_PROD</b> da própria planilha (uma linha por dia e colaborador, 24 colunas de hora) para manter os dias anteriores. Ela é mantida pelo script; não edite à mão.</p>' +
+    '<p><b>Atingimento</b>: real ÷ meta somando só as horas já fechadas que têm meta. A hora em curso aparece no gráfico mas não entra na conta.</p>' +
+    '<p><b>Média por hora</b>: total do colaborador ÷ horas em que produziu (valor &gt; 0). Inclui a hora parcial em curso.</p>' +
+    '<p><b>Abaixo da média</b>: colaborador com pelo menos 2 horas ativas e média/h menor que 70% da média da equipe no filtro.</p>';
+}
+
+ 
+document.addEventListener('click', function (e) {
+  var el = e.target.closest('[data-act]'); if (!el) return;
+  var a = el.dataset.act, v = el.dataset.v;
+  switch (a) {
+    case 'refresh': load(true); return;
+    case 'theme': setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); return;
+    case 'quick': S.date = v === 'today' ? opToday() : opYesterday(); if (dates().indexOf(S.date) < 0) { var ds = dates(); S.date = ds[ds.length - 1]; } break;
+    case 'turno': S.turno = (S.turno === v && el.classList.contains('fz')) ? 'ALL' : v; break;
+    case 'sort': S.sort = v; break;
+    case 'more': S.shown += 50; renderPeople(people(S.date, S.turno)); return;
+    case 'open': openSheet(el.dataset.id); return;
+    case 'closeSheet': $('#sheet').hidden = true; return;
+    case 'csv': csv(); return;
+  }
+  S.shown = 25; render();
+});
+document.addEventListener('change', function (e) { var k = e.target.dataset.chg; if (!k) return; S[k] = e.target.value || null; S.shown = 25; render(); });
+document.addEventListener('input', function (e) { if (e.target.id === 'q') { S.q = e.target.value; S.shown = 25; renderPeople(people(S.date, S.turno)); } });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') $('#sheet').hidden = true; });
+
+(function init() {
+  var t = 'dark';
+  try { t = localStorage.getItem('prodturno-pe2-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); } catch (e) {}
+  setTheme(t);
+  load(false);
+  setInterval(function () { if (!document.hidden && D) load(false); }, (window.__REFRESH || 60) * 1000);
+})();
+})();
+</script>

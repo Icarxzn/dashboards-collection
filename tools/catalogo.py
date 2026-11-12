@@ -61,6 +61,10 @@ PROJETOS = [
      "sheet_id": "1ro9a0FBqqtAetLoNS_8M885Dudw1f84jxUa_rI8FYNs", "sheet_nome": "Produtividade PE2",
      "script_id": "1O09ck43G7a2siM6LCexaQ36CocbAkUisvOSZJy9H5nnhLBD7B-owZEbb",
      "deploy_id": "AKfycbwLQS99GJ8_YhL1JKLwBk7SFyp7owKGzlQElT1GklpNjACbgms_EXZh4oJBb6iafk8J"},
+    {"dash": "09-produtividade-turno", "unidade": "pe2", "nome": "Produtividade por Turno",
+     "sheet_id": "15zDTkfz-01gZgefZz9aukXbXnXM2WDbF3zA1iWPXGOE", "sheet_nome": "Produtividade PE2",
+     "script_id": "1yOxXxJQbJX9VEdKsErbfz3VB1q4HFnKDts2iNqN9f0TEQRzjVgkBKxZ-",
+     "deploy_id": "AKfycbxwkHQWKlW_egNvJtSnmAiAFgxO7FGppeSiTsB0_WdE2tFnbOeUioqq-lEySjvkm_Lg"},
 ]
 
 # Planilhas usadas fora dos web apps

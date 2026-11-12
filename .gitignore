@@ -30,3 +30,6 @@ report-fifo-seatalk/preview_*.png
 
 # fonte local da apresentação (publicada como Artifact)
 _deck/
+
+# webhooks e outros segredos dos projetos Apps Script (vao pelo clasp, nunca para o Git)
+dashboards/*/*/Segredo.gs

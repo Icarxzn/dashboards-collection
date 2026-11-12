@@ -18,10 +18,52 @@ function doGet() {
   garantirGatilho_();
   const t = HtmlService.createTemplateFromFile('Index');
   t.unidade = CONFIG.UNIDADE;
+  t.urlApp = ScriptApp.getService().getUrl() || '';
   return t.evaluate()
     .setTitle('Produtividade por Operador · ' + CONFIG.UNIDADE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SEATALK  (botão "Enviar ao Seatalk": manda a imagem do gráfico ao grupo)
+//  O webhook NÃO fica neste arquivo (o repositório é público). Ordem de busca:
+//   1) Propriedades do script, chave SEATALK_WEBHOOK (Configurações do projeto);
+//   2) constante SEATALK_WEBHOOK_PADRAO do arquivo Segredo.gs — enviado pelo clasp ao Apps Script,
+//      mas fora do Git (.gitignore). Sem nenhum dos dois, o botão avisa que falta configurar.
+// ═══════════════════════════════════════════════════════════════
+const SEATALK_PROP = 'SEATALK_WEBHOOK';
+
+function webhookSeatalk_() {
+  const prop = PropertiesService.getScriptProperties().getProperty(SEATALK_PROP);
+  if (prop) return prop;
+  return typeof SEATALK_WEBHOOK_PADRAO !== 'undefined' ? SEATALK_WEBHOOK_PADRAO : '';
+}
+
+/**
+ * Envia ao grupo só a imagem (PNG em base64) do gráfico do turno.
+ * Uma tentativa só: repetir um POST que já chegou duplicaria no grupo.
+ */
+function enviarSeatalk(imagemB64) {
+  const url = webhookSeatalk_();
+  if (!url) throw new Error('O webhook do Seatalk não está configurado no projeto.');
+  const b64 = String(imagemB64 || '').replace(/^data:image\/\w+;base64,/, '');
+  if (!b64) throw new Error('Imagem vazia.');
+  if (b64.length > 6.5e6) throw new Error('Imagem grande demais para o Seatalk.');
+
+  postSeatalk_(url, { tag: 'image', image_base64: { content: b64 } });
+  return { ok: true };
+}
+
+function postSeatalk_(url, payload) {
+  const r = UrlFetchApp.fetch(url, {
+    method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true,
+  });
+  let code = 0;
+  try { code = JSON.parse(r.getContentText()).code || 0; } catch (e) { /* resposta sem JSON */ }
+  if (r.getResponseCode() >= 300 || code !== 0) {
+    throw new Error('O Seatalk recusou a mensagem (' + r.getResponseCode() + '): ' + r.getContentText().slice(0, 150));
+  }
 }
 
 /** Usado no Index.html: <?!= include('Styles'); ?> / <?!= include('JavaScript'); ?> */

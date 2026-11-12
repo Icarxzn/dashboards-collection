@@ -61,6 +61,11 @@ quando o carimbo `Atualizado:` muda.
 - `Code.gs → CONFIG`: `SHEET_ID`, `UNIDADE`, `ABA`, `ABA_META`, `CACHE_SEG`.
 - `JavaScript.html`: `HORAS_TURNO`, `LIMIAR_MELHORAR` (0,8), `META_OP_HORA` (500), `POLL_MS`.
 - Sem bibliotecas externas (gráficos em SVG). O modo claro/escuro fica salvo no navegador (`prodTheme`).
+- **Botão "Enviar ao Seatalk":** gera um PNG do gráfico do turno escolhido (com título e resumo), mostra a
+  prévia e, ao confirmar, `enviarSeatalk()` manda **só a imagem** ao grupo.
+  O webhook **não fica no repositório**: vem da propriedade `SEATALK_WEBHOOK` do script ou, se ela não
+  existir, da constante `SEATALK_WEBHOOK_PADRAO` no arquivo `pe2/Segredo.gs` — que vai ao Apps Script pelo
+  `clasp push`, mas está no `.gitignore`. Numa máquina nova, crie esse arquivo (ou a propriedade) antes do push.
 
 ## Como executar, manter e ajustar
 

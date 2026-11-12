@@ -125,7 +125,7 @@ function renderKpis() {
 
   // Área 1: produção por hora
   document.getElementById('sTotal').textContent = fmt(d.geral.total);
-  sparkline('sparkProd', d.geral.h, ['#8b5cf6', '#38bdf8']);
+  sparkline('sparkProd', d.geral.h, ['#ee4d2d', '#ff8a3d']);
   let iPico = -1;
   d.geral.h.forEach((v, k) => { if (v > 0 && (iPico < 0 || v > d.geral.h[iPico])) iPico = k; });
   document.getElementById('sPico').innerHTML = iPico >= 0
@@ -135,7 +135,7 @@ function renderKpis() {
   const opsHora = d.horas.map((_, k) => d.ops.filter(o => o.h[k] > 0).length);
   document.getElementById('sOps').textContent = fmt(ativos.length);
   document.getElementById('sOpsSub').textContent = 'operadores com produção · ' + fmt(d.ops.length) + ' na lista';
-  sparkline('sparkOps', opsHora, ['#e879f9', '#8b5cf6']);
+  sparkline('sparkOps', opsHora, ['#ff8a3d', '#ffb547']);
   document.getElementById('sMedia').innerHTML = 'Média <b>' + (ativos.length ? fmt(somaAtivos / ativos.length) : '—') +
     '</b> por operador · até <b>' + Math.max(0, ...opsHora) + '</b> operadores na mesma hora';
 }
@@ -156,7 +156,7 @@ function hbar(rotulo, v, max) {
 
 function sparkline(id, vals, cores) {
   const box = document.getElementById(id);
-  const W = Math.max(200, box.clientWidth), H = 90;
+  const W = Math.max(200, box.clientWidth), H = Math.max(60, box.clientHeight);
   const max = Math.max(1, ...vals), n = vals.length;
   if (n < 2) { box.innerHTML = ''; return; }
   const x = i => i / (n - 1) * W, y = v => H - 6 - (H - 14) * v / max;
@@ -196,40 +196,46 @@ function calcTurno(t) {
   const pts = HORAS_TURNO[t].map(h => {
     const r = h in real && posDia(h) <= agoraPos ? real[h] : null;
     const m = d.meta && d.meta[h] != null ? d.meta[h] : null;
-    const p = r != null && m ? r / m : null;
-    const st = p == null ? 'na' : p >= 1 ? 'ok' : p >= LIMIAR_MELHORAR ? 'mid' : 'bad';
     // meta "até agora": hora passada inteira, hora atual proporcional aos minutos, futuras não contam
     const frac = posDia(h) < agoraPos ? 1 : posDia(h) === agoraPos ? am / 60 : 0;
-    return { h: h, r: r, m: m, p: p, st: st, mAteAgora: (m || 0) * frac };
+    const emAndamento = posDia(h) === agoraPos;
+    // hora em andamento: compara com a meta proporcional; nos primeiros 10 min fica neutra (ainda não diz nada)
+    const p = r == null || !m ? null : emAndamento ? (am < 10 ? null : r / (m * frac)) : r / m;
+    const st = p == null ? 'na' : p >= 1 ? 'ok' : p >= LIMIAR_MELHORAR ? 'mid' : 'bad';
+    return { h: h, r: r, m: m, p: p, st: st, agora: emAndamento, mAteAgora: (m || 0) * frac };
   });
   const comDado = pts.filter(x => x.r != null);
   return { pts: pts, comDado: comDado, prod: comDado.reduce((a, x) => a + x.r, 0), meta: pts.reduce((a, x) => a + x.mAteAgora, 0) };
 }
 
-function renderChart() {
+// exp = {W, H}: desenha num tamanho fixo e devolve o SVG (usado na imagem do Seatalk) sem mexer na tela
+function renderChart(exp) {
   const t = estado.chartTurno;
   const { pts, comDado, prod, meta } = calcTurno(t);
   const pctT = meta ? prod / meta : null;
   const stT = pctT == null ? '' : pctT >= 1 ? 'ok' : pctT >= LIMIAR_MELHORAR ? 'mid' : 'bad';
-  document.getElementById('phResumo').innerHTML = comDado.length
+  if (!exp) document.getElementById('phResumo').innerHTML = comDado.length
     ? 'Produzido <b>' + fmt(prod) + '</b><span class="sep">|</span>Meta até agora <b>' + (meta ? fmt(meta) : '—') + '</b>' +
       (pctT != null ? '<span class="sep">|</span><b style="color:var(--' + stT + ')">' + pct1(pctT) + '</b> da meta' : '')
     : 'Sem produção no ' + t;
 
   // Gráfico (SVG): barra = realizado, traço = meta da hora
-  const box = document.getElementById('chart');
-  // altura acompanha a tela: ocupa o espaço livre abaixo do cabeçalho (mín. 380, máx. 720)
-  const W = Math.max(520, box.clientWidth);
-  const H = Math.round(Math.min(720, Math.max(420, window.innerHeight * 0.68)));   // só depende da altura da tela
+  const box = exp ? null : document.getElementById('chart');
+  // na tela: ocupa o espaço livre do cartão (o SVG não influencia esse tamanho); na exportação: tamanho fixo
+  const W = exp ? exp.W : Math.max(520, box.clientWidth);
+  const H = exp ? exp.H : Math.max(300, box.clientHeight);
   const pl = 56, pr = 8, pt = 40, pb = 56;
-  const n = pts.length, slot = (W - pl - pr) / n, bw = Math.min(120, slot * 0.7);
-  const fsBar = Math.max(11, Math.min(16, bw / 4.3));          // número da barra cabe na largura da barra
+  const n = pts.length, slot = (W - pl - pr) / n, bw = Math.min(84, slot * 0.52);
+  const fsBar = Math.max(12.5, Math.min(16, bw / 4.3));          // número da barra cabe na largura da barra
   ESCALA_META = Math.max(0.8, Math.min(1, slot / 110));         // etiqueta da meta acompanha a largura
   const vmax = Math.max(1, ...pts.map(x => Math.max(x.r || 0, x.m || 0))) * 1.12;
   const y = v => pt + (H - pt - pb) * (1 - v / vmax);
   const cx = i => pl + slot * i + slot / 2;
   const cor = { ok: 'var(--ok)', mid: 'var(--mid)', bad: 'var(--bad)', na: 'var(--muted)' };
-  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Produção por hora do ' + t + ' comparada à meta">';
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Produção por hora do ' + t + ' comparada à meta">' +
+    // semáforo padrão em degradê: verde = bateu a meta · amarelo = 80–99% · vermelho = abaixo de 80% · cinza = sem meta
+    '<defs>' + [['ok', '#4ade80', '#16a34a'], ['mid', '#fde047', '#eab308'], ['bad', '#f87171', '#dc2626'], ['na', '#9ca3af', '#6b7280']]
+      .map(g => '<linearGradient id="gBar-' + g[0] + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + g[1] + '"/><stop offset="1" stop-color="' + g[2] + '"/></linearGradient>').join('') + '</defs>';
   for (let g = 0; g <= 4; g++) {
     const v = vmax / 4 * g;
     s += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y(v) + '" y2="' + y(v) + '" style="stroke:var(--border)"' + (g ? ' stroke-dasharray="2 4"' : '') + '/>' +
@@ -239,7 +245,7 @@ function renderChart() {
     const c = cx(i);
     if (x.r != null) {
       const yt = Math.min(y(x.r), H - pb - 2);
-      s += '<rect x="' + (c - bw / 2) + '" y="' + yt + '" width="' + bw + '" height="' + (H - pb - yt) + '" rx="6" style="fill:' + cor[x.st] + '" opacity=".88">' +
+      s += '<rect x="' + (c - bw / 2) + '" y="' + yt + '" width="' + bw + '" height="' + (H - pb - yt) + '" rx="6" fill="url(#gBar-' + x.st + ')" opacity="' + (x.agora ? '.5' : '1') + '">' +
         '<title>' + faixa(x.h) + ' · ' + fmt(x.r) + (x.m ? ' de ' + fmt(x.m) + ' (' + pct1(x.p) + ')' : '') + '</title></rect>';
       const dentro = (H - pb - yt) > fsBar * 2.2;   // barra alta: número dentro do topo da barra; baixa: logo acima
       let ylab = dentro ? yt + fsBar * 1.45 : yt - 10;
@@ -248,11 +254,11 @@ function renderChart() {
         const abaixo = y(x.m) + 30;
         if (abaixo < H - pb - 6) ylab = abaixo;
       }
-      s += '<text x="' + c + '" y="' + ylab + '" text-anchor="middle" font-size="' + fsBar.toFixed(1) + '" font-weight="700" style="fill:' + (dentro ? '#14162e' : 'var(--text)') + '">' + fmt(x.r) + '</text>';
+      s += '<text x="' + c + '" y="' + ylab + '" text-anchor="middle" font-size="' + fsBar.toFixed(1) + '" font-weight="700" style="fill:' + (!dentro ? 'var(--text)' : x.st === 'mid' ? '#2a2105' : '#ffffff') + '">' + fmt(x.r) + '</text>';
     }
     const base = H - pb;
     s += '<text x="' + c + '" y="' + (base + 22) + '" text-anchor="middle" font-size="15" font-weight="700" style="fill:var(--text)">' + String(x.h).padStart(2, '0') + 'h</text>' +
-      '<text x="' + c + '" y="' + (base + 43) + '" text-anchor="middle" font-size="15" font-weight="700" style="fill:' + cor[x.st] + '">' + (x.p != null ? pct1(x.p) : '—') + '</text>';
+      '<text x="' + c + '" y="' + (base + 43) + '" text-anchor="middle" font-size="15" font-weight="700" style="fill:' + cor[x.st] + '">' + (x.p != null ? pct1(x.p) : x.agora && x.r != null ? 'agora' : '—') + '</text>';
   });
   // Linha da meta: curva ligando a meta de cada hora, com um ponto e o valor em cima de cada hora
   const mp = pts.map((x, i) => x.m != null ? [cx(i), y(x.m), x] : null).filter(Boolean);
@@ -271,6 +277,7 @@ function renderChart() {
       // valor da meta em cima do ponto, numa etiqueta escura (lê bem mesmo sobre a barra)
       etiquetaMeta(p[0], p[1] - 22, fmt(p[2].m));
   });
+  if (exp) return s + '</svg>';
   box.innerHTML = s + '</svg>';
 }
 
@@ -354,6 +361,82 @@ function ordenarPor(key) {
   renderTabela();
 }
 
+// ── Enviar ao Seatalk ─────────────────────────────────────────
+// Envia só a IMAGEM do gráfico do turno escolhido; o servidor repassa ao webhook do grupo.
+let ST = { imagem: '' };
+
+/** Converte o gráfico da tela (SVG) em PNG, com título e resumo, nas cores do tema atual. */
+function gerarImagemSeatalk() {
+  return new Promise(resolve => {
+    // gráfico desenhado num formato compacto só para a imagem: no Seatalk fica grande e legível
+    const vb = { width: 820, height: 480 };
+    let xml = renderChart({ W: vb.width, H: vb.height });
+    if (!xml) return resolve('');
+    const cs = getComputedStyle(document.documentElement);
+    xml = xml.replace(/var\((--[\w-]+)\)/g, (_, v) => (cs.getPropertyValue(v) || '#888').trim());
+    if (!/xmlns=/.test(xml)) xml = xml.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+    xml = xml.replace('<svg', '<svg font-family="Consolas, Menlo, monospace"');
+    const esc = 2.5, topo = 78, pad = 18;
+    const cv = document.createElement('canvas');
+    cv.width = (vb.width + pad * 2) * esc; cv.height = (vb.height + topo + pad) * esc;
+    const g = cv.getContext('2d');
+    g.scale(esc, esc);
+    g.fillStyle = cs.getPropertyValue('--surface').trim() || '#17181d';
+    g.fillRect(0, 0, vb.width + pad * 2, vb.height + topo + pad);
+    const { prod, meta } = calcTurno(estado.chartTurno);
+    const unidade = document.title.split('·').pop().trim();
+    g.fillStyle = cs.getPropertyValue('--text').trim();
+    g.font = 'bold 21px Segoe UI, Arial, sans-serif';
+    g.fillText('Produtividade ' + unidade + ' · Produção por hora × meta · ' + estado.chartTurno, pad, 34);
+    g.fillStyle = cs.getPropertyValue('--muted').trim();
+    g.font = '14px Segoe UI, Arial, sans-serif';
+    g.fillText('Atualizado ' + (DATA.agora || '') + ' · ' + (DATA.diaOp || '') +
+      '   ·   Produzido ' + fmt(prod) + '   ·   Meta até agora ' + (meta ? fmt(meta) : '—') +
+      (meta ? '   ·   ' + pct1(prod / meta) + ' da meta' : ''), pad, 58);
+    const img = new Image();
+    img.onload = () => { g.drawImage(img, pad, topo, vb.width, vb.height); resolve(cv.toDataURL('image/png')); };
+    img.onerror = () => resolve('');
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+  });
+}
+
+function stMsg(txt, tipo) {
+  const el = document.getElementById('stMsg');
+  el.textContent = txt || ''; el.className = 'modal-msg' + (tipo ? ' ' + tipo : '');
+}
+
+async function abrirSeatalk() {
+  if (!DATA) return;
+  document.getElementById('stModal').hidden = false;
+  document.getElementById('stPrevia').hidden = true;
+  const btn = document.getElementById('stEnviar');
+  btn.disabled = true; btn.textContent = 'Enviar';
+  stMsg('Gerando a imagem…');
+  ST.imagem = await gerarImagemSeatalk();
+  if (!ST.imagem) return stMsg('Não consegui gerar a imagem do gráfico.', 'erro');
+  document.getElementById('stImg').src = ST.imagem;
+  document.getElementById('stPrevia').hidden = false;
+  btn.disabled = false;
+  stMsg('Confira e clique em Enviar. A imagem vai para o grupo do Seatalk.');
+}
+
+function fecharSeatalk() { document.getElementById('stModal').hidden = true; }
+
+async function confirmarSeatalk() {
+  const btn = document.getElementById('stEnviar');
+  btn.disabled = true;
+  try {
+    stMsg('Enviando…');
+    await gs('enviarSeatalk', ST.imagem);
+    stMsg('✅ Enviado ao Seatalk!', 'ok');
+    btn.textContent = 'Enviado';
+    setTimeout(fecharSeatalk, 1800);
+  } catch (e) {
+    stMsg('Não enviado: ' + (e.message || e), 'erro');
+    btn.disabled = false;
+  }
+}
+
 // ── Controles ─────────────────────────────────────────────────
 quandoPronto(() => {
   document.querySelectorAll('#chipsTurno .chip').forEach(btn => btn.addEventListener('click', () => {
@@ -371,13 +454,14 @@ quandoPronto(() => {
   const redesenhar = () => { clearTimeout(tmr); tmr = setTimeout(() => { if (DATA) { renderKpis(); renderChart(); } }, 120); };
   if (window.ResizeObserver) {
     new ResizeObserver(() => {
-      const w = document.getElementById('chart').clientWidth;
-      if (w && Math.abs(w - ultimaLarg) > 2) { ultimaLarg = w; redesenhar(); }
+      const el = document.getElementById('chart'), tam = el.clientWidth + 'x' + el.clientHeight;
+      if (el.clientWidth && tam !== ultimaLarg) { ultimaLarg = tam; redesenhar(); }
     }).observe(document.getElementById('chart'));
   }
   window.addEventListener('resize', redesenhar);
   document.getElementById('busca').addEventListener('input', e => { estado.busca = e.target.value; if (DATA) renderTabela(); });
   document.getElementById('chkAtivos').addEventListener('change', e => { estado.soAtivos = e.target.checked; if (DATA) renderTabela(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharSeatalk(); });
   carregar();
   setInterval(carregar, POLL_MS);
 });

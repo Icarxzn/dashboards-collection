@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<meta name="color-scheme" content="dark light">
+
+<title>Produtividade por Turno · <?= unidade ?></title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link href="https://fonts.googleapis.com/css2?family=Fira&#43;Code:wght@400;500;600&amp;family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<?!= include('Styles'); ?>
+</head>
+<body>
+
+
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+
+  <defs>
+
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></symbol>
+
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/></symbol>
+
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+
+    <symbol id="i-package" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+
+    <symbol id="i-trend" viewBox="0 0 24 24"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></symbol>
+
+  </defs>
+
+</svg>
+
+
+
+<a class="skip" href="#resumo">Ir para o conteúdo</a>
+
+<div class="aura" aria-hidden="true"></div>
+
+
+
+<div class="page">
+
+
+
+  <section class="hero card" aria-label="Título">
+
+    <div class="hero-t">
+
+      <p class="hero-eb" id="heroEb">Control Tower</p>
+
+      <h1>Produtividade <em>por Turno</em> · <?= unidade ?></h1>
+
+      <p class="hero-sub mono" id="heroSub">—</p>
+
+      <div class="hero-pills">
+
+        <span class="hp"><b>Turnos</b> T1 06–14 · T2 14–22 · T3 22–06</span>
+
+        <span class="hp" id="sync" aria-live="polite">Carregando…</span>
+
+      </div>
+
+    </div>
+
+    <svg class="hero-art" viewBox="0 0 400 130" aria-hidden="true">
+
+      <defs><linearGradient id="gArt" x1="0" x2="1"><stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--brand2)"/></linearGradient></defs>
+
+      <path d="M28 92 C 90 10, 190 10, 252 70 S 340 100, 372 78" fill="none" stroke="url(#gArt)" stroke-width="2" stroke-dasharray="3 6" stroke-linecap="round"/>
+
+      <g class="art-n"><circle cx="28" cy="92" r="9"/><circle cx="130" cy="38" r="9"/><circle cx="252" cy="70" r="9"/><circle cx="372" cy="78" r="9"/></g>
+
+      <g class="art-l" text-anchor="middle">
+
+        <text x="28" y="116">Real</text><text x="130" y="62">Meta</text><text x="252" y="94">Atingimento</text><text x="372" y="102">Pessoas</text>
+
+      </g>
+
+      <g class="art-v" text-anchor="middle"><text id="art0" x="28" y="80">—</text><text id="art1" x="130" y="26">—</text><text id="art2" x="252" y="58">—</text><text id="art3" x="372" y="66">—</text></g>
+
+    </svg>
+
+    <div class="hero-a">
+
+      <button class="btn-i" id="btnRefresh" data-act="refresh" aria-label="Atualizar dados"><svg class="ic"><use href="#i-refresh"/></svg></button>
+
+      <button class="btn-i" id="btnTheme" data-act="theme" aria-label="Alternar tema claro/escuro"><svg class="ic"><use href="#i-sun"/></svg></button>
+
+    </div>
+
+  </section>
+
+
+
+  <div class="fbar" id="filters" role="toolbar" aria-label="Filtros"></div>
+
+
+
+  <main id="main">
+
+    <div id="banner"></div>
+
+
+
+    <section id="resumo" class="chap" aria-labelledby="h-resumo">
+
+      <h2 class="sec" id="h-resumo"><i>1</i>Panorama <small id="resumoSub">do dia selecionado</small></h2>
+
+      <div id="k3" class="k3"></div>
+
+      <div id="k5" class="k5"></div>
+
+    </section>
+
+
+
+    <section id="turnos" class="chap" aria-labelledby="h-turnos">
+
+      <h2 class="sec" id="h-turnos"><i>2</i>Turnos <small>toque num turno para filtrar</small></h2>
+
+      <div id="shifts" class="fz3"></div>
+
+    </section>
+
+
+
+    <section id="horas" class="chap" aria-labelledby="h-horas">
+
+      <h2 class="sec" id="h-horas"><i>3</i>Meta × real, hora a hora <small id="horasSub"></small></h2>
+
+      <div class="card">
+
+        <div class="card-h"><h3>Produção por hora</h3><span class="muted xs">número = real · % = atingimento · linha = meta</span></div>
+
+        <div class="chart-scroll"><div class="chart-wrap tall" id="hCh"><canvas id="chHora" role="img" aria-label="Produção real contra a meta por hora"></canvas></div></div>
+
+        <div class="legend" id="legHora"></div>
+
+      </div>
+
+      <div class="card" style="margin-top:10px">
+
+        <div class="card-h"><h3>Quadro por hora</h3><span class="muted xs">verde bateu · âmbar 85–99% · vermelho &lt; 85%</span></div>
+
+        <div id="hourTbl"></div>
+
+      </div>
+
+    </section>
+
+
+
+    <section id="evolucao" class="chap" aria-labelledby="h-evo">
+
+      <h2 class="sec" id="h-evo"><i>4</i>Evolução <small>últimos 14 dias</small></h2>
+
+      <div class="card">
+
+        <div class="card-h"><h3>Meta × real por dia</h3><span class="muted xs" id="evoCap"></span></div>
+
+        <div class="chart-wrap short"><canvas id="chEvo" role="img" aria-label="Produção real contra a meta por dia"></canvas></div>
+
+        <div class="legend" id="legEvo"></div>
+
+      </div>
+
+    </section>
+
+
+
+    <section id="pessoas" class="chap" aria-labelledby="h-pes">
+
+      <h2 class="sec" id="h-pes"><i>5</i>Produtividade individual <small id="pesSub"></small></h2>
+
+      <div class="grid2">
+
+        <div class="card" id="rkTop"></div>
+
+        <div class="card" id="rkLow"></div>
+
+      </div>
+
+      <div class="card list-card">
+
+        <div class="card-h wrap">
+
+          <h3>Colaboradores <span id="listCount" class="pill"></span></h3>
+
+          <div class="tools">
+
+            <div class="seg" id="sortMode" role="group" aria-label="Ordenar">
+
+              <button data-act="sort" data-v="total">Total</button><button data-act="sort" data-v="avg">Média/h</button><button data-act="sort" data-v="name">Nome</button>
+
+            </div>
+
+            <label class="search"><svg class="ic"><use href="#i-search"/></svg><span class="sr">Buscar colaborador</span><input id="q" type="search" inputmode="search" autocomplete="off" placeholder="Buscar nome ou Ops ID"></label>
+
+            <button class="btn-s btn-p" data-act="csv"><svg class="ic"><use href="#i-download"/></svg>CSV</button>
+
+          </div>
+
+        </div>
+
+        <div id="list"></div>
+
+        <div id="more" class="more"></div>
+
+      </div>
+
+    </section>
+
+
+
+    <footer class="defs card">
+
+      <details>
+
+        <summary>Definições</summary>
+
+        <div class="defs-b" id="defs"></div>
+
+      </details>
+
+    </footer>
+
+  </main>
+
+</div>
+
+
+
+<div id="sheet" class="sheet" hidden>
+
+  <div class="sheet-bg" data-act="closeSheet"></div>
+
+  <div class="sheet-p" role="dialog" aria-modal="true" aria-labelledby="sheetT" tabindex="-1">
+
+    <div class="sheet-h"><span class="grab" aria-hidden="true"></span><h3 id="sheetT"></h3><button class="btn-i" data-act="closeSheet" aria-label="Fechar"><svg class="ic"><use href="#i-x"/></svg></button></div>
+
+    <div id="sheetB" class="sheet-b"></div>
+
+  </div>
+
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+
+
+<?!= include('JavaScript'); ?>
+</body>
+</html>

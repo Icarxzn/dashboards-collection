@@ -16,6 +16,7 @@ rótulo da unidade no `CONFIG` do `Code.gs`.
 | 06 | **Produtividade de Sacas** | % de pacotes em saca por dia operacional/turno, hora a hora × planejado | [README](dashboards/06-produtividade-sacas/README.md) | ![](dashboards/06-produtividade-sacas/preview-dashboard.png) |
 | 07 | **FIFO Stage IN** | Quebra de FIFO no stage de entrada, ofensores × headcount (PE2 + PE4 num só painel) | [README](dashboards/07-fifo-stage-in/README.md) | ![](dashboards/07-fifo-stage-in/preview-dashboard.png) |
 | 08 | **Produtividade por Operador** | Produção hora a hora × meta (aba Meta) por turno, operadores na meta de 500/h (só PE2 por enquanto) | [README](dashboards/08-produtividade-operadores/README.md) | ![](dashboards/08-produtividade-operadores/preview-dashboard.png) |
+| 09 | **Produtividade por Turno** | Control Tower por turno e hora: real × meta (aba Plano), atingimento, evolução 14 dias, produtividade individual; histórico na aba _LEDGER_PROD | [README](dashboards/09-produtividade-turno/README.md) | — |
 | — | **Report FIFO no Seatalk** | Mensagem + imagem diária de quebra de FIFO (Python) | [README](report-fifo-seatalk/README.md) | — |
 
 > As imagens de preview usam **dados fictícios** (geradas por `tools/gerar_previews.py`).
@@ -34,6 +35,7 @@ Abrir logado com conta **@shopee.com** (o acesso é restrito ao domínio).
 | Produtividade de Sacas | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbwCff3M6jVGI3DbiP3Ce-uwTDNkYScUG_zuOYxaOeRrRo_Ywn47Zutjm0PufWDgFBPo/exec) | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbydJnPkhf1EL4ZkLq8jDkx-ZJYci8E9iR72r96R08Q0DwwKsgHYIzljEtefBVTJQUhT/exec) |
 | FIFO Stage IN | [abrir (PE2 + PE4)](https://script.google.com/a/macros/shopee.com/s/AKfycbymhO0ljXXcgPygiGrbvtjxC0_1kPpPA49hY8Acf18XSHM_OKHcHlkwfQoC7KA3_U7h/exec) | ↔ |
 | Produtividade por Operador | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbwLQS99GJ8_YhL1JKLwBk7SFyp7owKGzlQElT1GklpNjACbgms_EXZh4oJBb6iafk8J/exec) | — |
+| Produtividade por Turno | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbxwkHQWKlW_egNvJtSnmAiAFgxO7FGppeSiTsB0_WdE2tFnbOeUioqq-lEySjvkm_Lg/exec) | [abrir](https://script.google.com/a/macros/shopee.com/s/AKfycbx8Zqg2gy4GGnhi1gdVeEuXBFbqHsQiFPJS33xHOMkxEIQdWsz01fdN3oOiWb-iCj20Ww/exec) |
 
 IDs de planilha, projeto Apps Script e implantação de cada um: [`tools/catalogo.py`](tools/catalogo.py).
 
