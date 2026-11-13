@@ -84,6 +84,14 @@
     background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
     padding: 6px 10px; font: 500 12px Inter, sans-serif; min-width: 150px; max-width: 220px;
   }
+  /* período personalizado (de / até) */
+  .datas { display: flex; align-items: center; gap: 6px; }
+  .datas input[type=date] {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+    padding: 5px 8px; font: 500 12px Inter, sans-serif; color-scheme: dark;
+  }
+  .datas input[type=date].on { border-color: var(--accent, #f97316); }
+  .datas span { font-size: 11px; color: var(--dim); }
 
   /* Sections */
   .sec { margin-top: 26px; }
@@ -265,6 +273,12 @@ const nomeUnid = id => (DB.unidades.find(u => u.id === id) || {}).nome || id;
 function janela(rows) {
   const max = rows.reduce((m, r) => r.d > m ? r.d : m, '');
   if (!max) return { de: '', ate: '' };
+  if (S.periodo === 'custom') {           // período escolhido nos campos De / Até
+    const min = rows.reduce((m, r) => !m || r.d < m ? r.d : m, '');
+    let de = S.de || min, ate = S.ate || max;
+    if (de > ate) { const t = de; de = ate; ate = t; }
+    return { de: de, ate: ate };
+  }
   switch (S.periodo) {
     case 'ultimo': return { de: max, ate: max };
     case 'ontem': return { de: addDias(max, -1), ate: addDias(max, -1) };
@@ -357,6 +371,10 @@ function render() {
   <div class="filters">
     <div class="fgroup"><label>Período</label><div class="row">
       ${chip('periodo', 'ultimo', 'Último dia')}${chip('periodo', 'ontem', 'Dia anterior')}${chip('periodo', '7d', '7 dias')}${chip('periodo', '15d', '15 dias')}${chip('periodo', 'tudo', 'Tudo')}
+      <div class="datas" title="Escolha o período (a base traz os últimos ${DB.dias || 45} dias)">
+        <span>De</span><input type="date" class="${S.periodo === 'custom' ? 'on' : ''}" value="${j.de || dataMin(todas)}" min="${dataMin(todas)}" max="${dataMax(todas)}" onchange="setData('de', this.value)">
+        <span>até</span><input type="date" class="${S.periodo === 'custom' ? 'on' : ''}" value="${j.ate}" min="${dataMin(todas)}" max="${dataMax(todas)}" onchange="setData('ate', this.value)">
+      </div>
     </div></div>
     <div class="fgroup"><label>Turno</label><div class="row">
       ${chip('turno', 'ALL', 'Todos')}${TURNOS.map(t => chip('turno', t, t)).join('')}
@@ -386,6 +404,15 @@ function chip(campo, v, txt) {
 }
 function opt(v, txt, atual) { return `<option value="${esc(v)}" ${v === atual ? 'selected' : ''}>${esc(txt)}</option>`; }
 function setF(campo, v) { S[campo] = v; if (campo === 'grupo') S.area = 'ALL'; render(); }
+/* período personalizado: ao mexer em De/Até, o filtro passa a ser "custom" partindo do período que estava na tela */
+function setData(campo, v) {
+  if (S.periodo !== 'custom') { const j = janela(baseSel()); S.de = j.de || dataMin(baseSel()); S.ate = j.ate; }
+  S[campo] = v || '';
+  S.periodo = 'custom';
+  render();
+}
+const dataMin = rows => rows.reduce((m, r) => !m || r.d < m ? r.d : m, '');
+const dataMax = rows => rows.reduce((m, r) => r.d > m ? r.d : m, '');
 function recarregar() {
   document.getElementById('app').innerHTML = '<div class="loading"><div class="spin"></div><div>Relendo a planilha…</div></div>';
   carregar(true);

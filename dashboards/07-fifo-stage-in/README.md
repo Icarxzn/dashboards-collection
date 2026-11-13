@@ -50,7 +50,7 @@ Janela enviada: últimos **45 dias** da base (`DIAS`).
 - **Permanência** = `stage_out_date − staging_date` (minutos).
 - **Ofensores:** alternável entre "quem tirou (stage-out)" e "quem colocou (staging)"; mostra % de quebra
   por colaborador, turno, líder e se está fora do HC/inativo.
-- **Períodos:** último dia, dia anterior, 7 dias, 15 dias, tudo; filtros de turno, grupo e área.
+- **Períodos:** último dia, dia anterior, 7 dias, 15 dias, tudo, ou **personalizado** (campos De / até, dentro dos 45 dias da base); filtros de turno, grupo e área.
 
 ## Dependências e configuração
 
