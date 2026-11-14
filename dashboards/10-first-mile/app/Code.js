@@ -22,6 +22,7 @@
 var SPREADSHEET_ID = '1m7EKgvfEBdGiCW032sZKB6mf2QqIpYJfK-aDlo_E5zc';
 var DEFAULT_TAB_TRIPS = 'FMTrip';
 var DEFAULT_TAB_QUEUE = 'Inbound Queue List';
+var DEFAULT_TAB_FORECAST = 'Forcast';   // trips programadas do dia (uma linha por trip)
 var FM_ARRIVAL_TYPE = 7;        // arrival_type da fila para First Mile (1 = Line Haul)
 var QUEUE_DONE_STATUS = 4;      // queue_status: saiu da fila (finalizado)
 var TRIP_CANCELLED_STATUS = 4;  // business_status da FMTrip: trip cancelada
@@ -39,6 +40,8 @@ var TRIP_COLS = ['trip_id', 'route_display_name', 'cluster_name', 'vehicle_type'
   'agency_id', 'business_status', 'primeira_coleta', 'ultima_coleta', 'chegou_soc', 'ultimo_inbound',
   'pedidos', 'pacotes_coletados', 'pacotes_a_caminho', 'pacotes_recebidos',
   'saida_prevista', 'chegada_prevista', 'paradas', 'paradas_feitas', 'sellers', 'sellers_coletados'];
+var FORECAST_COLS = ['trip_ctime', 'dia', 'trip_id', 'route_name', 'vehicle_real', 'vehicle_plate', 'driver_start_time',
+  'agency_name', 'handedover_time', 'portuguese_business_status'];
 var QUEUE_COLS = ['queue_number', 'driver_id', 'driver_name', 'agency', 'vehicle_number', 'arrival_type',
   'queue_status', 'add_to_queue_time', 'occupied_dock_name', 'order_quantity'];
 
@@ -240,6 +243,7 @@ function getPayload() {
     });
 
     var board = buildDocks_(fila.rows, nowMs, pickupMaxMs);
+    var forecast = buildForecast_(ss, trips.rows, nowMs);
 
     return {
       ok: true,
@@ -251,6 +255,7 @@ function getPayload() {
       pickup: pickup,
       docks: board.docks,
       waiting: board.waiting,
+      forecast: forecast,
       meta: {
         spreadsheetUrl: ss.getUrl(),
         queueTab: cfg.tabQueue,
@@ -282,6 +287,47 @@ function testarPayload() {
   Logger.log('Colunas FMTrip: %s', JSON.stringify(p.meta.pickupFieldMap));
   Logger.log('Colunas fila: %s', JSON.stringify(p.meta.queueFieldMap));
   Logger.log(JSON.stringify(p.queue.slice(0, 3), null, 2));
+}
+
+/**
+ * Forecast (aba Forcast): uma linha por trip programada. O dia vem da coluna "Dia" (Hoje/Ontem);
+ * sem ela, compara trip_ctime com a data de hoje/ontem.
+ * Pacotes vem da FMTrip pelo trip_id: previsto = pedidos, coletado = pacotes_coletados, descarregado = pacotes_recebidos.
+ * Descarga finalizada = trip com handedover_time preenchido.
+ */
+function buildForecast_(ss, tripRows, nowMs) {
+  if (!ss.getSheetByName(DEFAULT_TAB_FORECAST)) return null;
+  var tz = Session.getScriptTimeZone();
+  var hoje = Utilities.formatDate(new Date(nowMs), tz, 'yyyy-MM-dd');
+  var ontem = Utilities.formatDate(new Date(nowMs - 86400000), tz, 'yyyy-MM-dd');
+  var fc = readTable_(ss, DEFAULT_TAB_FORECAST, FORECAST_COLS).rows;
+  var porTrip = {};
+  tripRows.forEach(function (t) { var k = str_(t.trip_id); if (k) porTrip[k] = t; });
+  var novo = function (dia) { return { dia: dia, veiculos: 0, finalizadas: 0, previsto: 0, coletado: 0, descarregado: 0, semTrip: 0, lista: [] }; };
+  var out = { hoje: novo(hoje), ontem: novo(ontem) };
+  var vistos = {};
+  fc.forEach(function (r) {
+    var d = r.trip_ctime;
+    var ds = Object.prototype.toString.call(d) === '[object Date]' ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : String(d).trim().slice(0, 10);
+    var rot = str_(r.dia).toLowerCase();
+    var qual = rot === 'hoje' ? 'hoje' : rot === 'ontem' ? 'ontem' : ds === hoje ? 'hoje' : ds === ontem ? 'ontem' : null;
+    var id = str_(r.trip_id);
+    if (!qual || !id || vistos[id]) return;
+    vistos[id] = true;
+    var o = out[qual], t = porTrip[id];
+    var ho = toIso_(r.handedover_time);
+    o.veiculos++;
+    if (ho) o.finalizadas++;
+    if (!t) o.semTrip++;
+    var prev = t ? (toInt_(t.pedidos) || 0) : null, col = t ? (toInt_(t.pacotes_coletados) || 0) : null, rec = t ? (toInt_(t.pacotes_recebidos) || 0) : null;
+    o.previsto += prev || 0; o.coletado += col || 0; o.descarregado += rec || 0;
+    o.lista.push({
+      trip_id: id, placa: str_(r.vehicle_plate), rota: str_(r.route_name), agencia: str_(r.agency_name),
+      veiculo: str_(r.vehicle_real), saida: toIso_(String(r.driver_start_time).replace(/\.\d+\s+\S+\/\S+$/, '')),
+      status: str_(r.portuguese_business_status), handover: ho, previsto: prev, coletado: col, descarregado: rec
+    });
+  });
+  return out;
 }
 
 /* ======================= LEITURA DAS ABAS ======================= */

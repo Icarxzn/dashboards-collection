@@ -30,7 +30,7 @@ var STATE = {
     pickup:     emptyFilters(),
     concluidas: emptyFilters()
   },
-  sort: { queue: 'aging_desc', pickup: 'aging_desc', concluidas: 'handover_desc' },
+  sort: { queue: 'prio_desc', pickup: 'prio_desc', concluidas: 'handover_desc' },   // prioridade: mais grave primeiro
   drawer: { open: false, tripId: null, kind: null }
 };
 
@@ -413,6 +413,15 @@ function sortRows (rows, sortVal, kind) {
   var m = (sortVal || 'aging_desc').split('_');
   var key = m[0], dir = m[1] === 'asc' ? 1 : -1;
   var getter;
+  if (key === 'prio') {
+    // mais grave primeiro: SLA estourado > crítico > atenção > ok; empate -> maior aging
+    var peso = function (r) { return (r.slaState === 'over' ? 4 : 0) + ({ crit: 3, warn: 2, ok: 1 }[r.farol] || 0); };
+    return rows.slice().sort(function (a, b) {
+      var d = peso(b) - peso(a);
+      if (d) return d;
+      return (b.agingMetric || 0) - (a.agingMetric || 0);
+    });
+  }
   if (key === 'orders') getter = function (r) { return r.qtd_order; };
   else if (key === 'pickup') getter = function (r) { return r.pk; };
   else if (key === 'handover') getter = function (r) { return r.ho; };
@@ -468,6 +477,9 @@ function render () {
 /* ---------------- VISAO GERAL ---------------- */
 function buildGeral () {
   $('#view').innerHTML =
+    '<section class="section" id="gFcSec"><div class="section__head"><h2>Forecast do dia</h2>' +
+      '<span class="hint" id="fcHint">Trips programadas na aba Forcast</span></div>' +
+      '<div id="gFc"></div></section>' +
     '<section class="section"><div class="section__head"><h2>Cards principais</h2>' +
       '<span class="hint">Panorama de veículos, orders e exceções</span></div>' +
       '<div class="kpigrid" id="gKpis"></div></section>' +
@@ -514,6 +526,7 @@ function fillGeral () {
     el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0');
   });
 
+  forecastCards();
   $('#gFlow').innerHTML = flowStepper(a.flow);
   $('#gBott').innerHTML = bottleneckCard(a.bottleneck);
   $('#gConc').innerHTML = concChart();
@@ -579,6 +592,58 @@ function concChart () {
     lg(COR.ok, 'Confortável ≤ ' + CONC.ok) + lg(COR.lim, 'No limite ' + (CONC.ok + 1) + '–' + CONC.limite) + lg(COR.over, 'Acima da capacidade ≥ ' + (CONC.limite + 1)) +
     lg('transparent', 'Previsto (ainda em pickup)', 'border:1px dashed var(--text-2)') +
     '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:18px;border-top:2px dashed var(--text-2)"></i>Capacidade</span></div>';
+}
+
+/* ---------- Forecast (aba Forcast + pacotes da FMTrip), com escolha Hoje / Ontem ---------- */
+var FC = { dia: 'hoje', lista: false };
+function forecastCards () {
+  var raw = STATE.raw && STATE.raw.forecast;
+  if (!raw || !raw.hoje) { $('#gFcSec').hidden = true; return; }
+  $('#gFcSec').hidden = false;
+  var f = raw[FC.dia] || raw.hoje, hoje = FC.dia === 'hoje';
+  var dd = f.dia.split('-');
+  $('#fcHint').innerHTML = '<span class="fcsel">' +
+    '<button data-fcdia="hoje" class="' + (hoje ? 'is-on' : '') + '">Hoje</button>' +
+    '<button data-fcdia="ontem" class="' + (!hoje ? 'is-on' : '') + '">Ontem</button></span>' +
+    ' Trips da aba Forcast de ' + dd[2] + '/' + dd[1] + ' · pacotes da FMTrip';
+  var real = f.coletado, falta = Math.max(0, f.previsto - real);
+  var ader = f.previsto ? real / f.previsto * 100 : null;
+  var nv = ader == null ? '' : ader >= 95 ? 'ok' : ader >= 80 ? 'warn' : 'crit';
+  var pend = Math.max(0, f.veiculos - f.finalizadas);
+  var fc = function (cls, label, value, sub, extra, attrs) {
+    return '<div class="fc ' + cls + '"' + (attrs || '') + '><div class="fc__l">' + label + '</div><div class="fc__v">' + value + '</div>' +
+      (sub ? '<div class="fc__s">' + sub + '</div>' : '') + (extra || '') + '</div>';
+  };
+  $('#gFc').innerHTML =
+    '<div class="fcgrid fcgrid--3">' +
+      fc('', 'Forecast do dia', fmtNum(f.previsto), 'pacotes previstos') +
+      fc('', 'Coletado / Descarregado', fmtNum(real),
+         (falta ? 'Faltam <b>' + fmtNum(falta) + '</b> pacotes para o forecast' : 'Forecast atingido') +
+         ' · descarregado ' + fmtNum(f.descarregado)) +
+      fc('fc--' + nv, 'Aderência ao forecast', ader == null ? '—' : ader.toFixed(2).replace('.', ',') + '%', '',
+         '<div class="fcbar"><i style="width:' + Math.min(100, ader || 0) + '%"></i></div>') +
+    '</div><div class="fcgrid fcgrid--4">' +
+      fc('', 'Veículos p/ descarga', fmtNum(f.veiculos), FC.lista ? 'clique para esconder a lista' : 'clique para ver os veículos', '', ' data-fclista="1" title="Ver os veículos"') +
+      fc('fc--ok', 'Descarga finalizada', fmtNum(f.finalizadas)) +
+      fc(pend ? 'fc--warn' : '', 'Pendentes', fmtNum(pend)) +
+      (hoje ? fc('fc--dark', 'Em fila agora', fmtNum(rowsForKind('queue').length), '', '', ' data-goto="fila" title="Ver os veículos na fila"')
+            : fc('fc--dark', 'Coletado ontem', fmtNum(f.coletado), 'descarregado ' + fmtNum(f.descarregado))) +
+    '</div>' + (FC.lista ? fcLista(f.lista || []) : '');
+}
+
+function fcLista (rows) {
+  if (!rows.length) return '<div class="empty muted" style="padding:16px;text-align:center">Nenhum veículo na aba Forcast para este dia.</div>';
+  rows = rows.slice().sort(function (a, b) { return (a.handover ? 1 : 0) - (b.handover ? 1 : 0) || String(a.saida || '').localeCompare(String(b.saida || '')); });
+  var body = rows.map(function (r) {
+    var st = r.handover ? '<span class="badge badge--ok"><span class="d"></span>Finalizada</span>' : '<span class="badge badge--warn"><span class="d"></span>Pendente</span>';
+    return '<tr><td class="mono"><b>' + dash(r.placa) + '</b></td><td>' + dash(r.rota) + '</td><td>' + dash(r.agencia) + '</td><td>' + dash(r.veiculo) + '</td>' +
+      '<td class="mono">' + fmtClock(r.saida) + '</td><td>' + dash(r.status) + '</td><td class="mono">' + fmtClock(r.handover) + '</td>' +
+      '<td class="num">' + fmtNum(r.previsto) + '</td><td class="num">' + fmtNum(r.coletado) + '</td><td class="num">' + fmtNum(r.descarregado) + '</td><td>' + st + '</td></tr>';
+  }).join('');
+  return '<div class="tablewrap" style="margin-top:16px"><div class="tablescroll"><table class="dt"><thead><tr>' +
+    '<th>Placa</th><th>Rota</th><th>Agência</th><th>Veículo</th><th>Saída</th><th>Status da trip</th><th>Handover</th>' +
+    '<th class="num">Previsto</th><th class="num">Coletado</th><th class="num">Descarregado</th><th>Descarga</th>' +
+    '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
 }
 
 function kpi (variant, icon, label, value, sub, small) {
@@ -696,6 +761,7 @@ function filterBar (kind) {
     '<div class="field field--xs"><label>Orders ≥</label><input class="inp mono" type="number" min="0" data-f="ordersMin" value="' + esc(f.ordersMin) + '"></div>' +
     '<div class="field field--xs"><label>Orders ≤</label><input class="inp mono" type="number" min="0" data-f="ordersMax" value="' + esc(f.ordersMax) + '"></div>' +
     '<div class="field field--sm"><label>Ordenar</label><select class="sel" data-sort>' +
+      opt('prio_desc', 'Prioridade', STATE.sort[kind]) +
       opt('aging_desc', 'Maior aging', STATE.sort[kind]) + opt('aging_asc', 'Menor aging', STATE.sort[kind]) +
       opt('orders_desc', 'Mais orders', STATE.sort[kind]) + opt('orders_asc', 'Menos orders', STATE.sort[kind]) +
       opt('pickup_desc', 'Last Pickup', STATE.sort[kind]) + opt('handover_desc', 'Last Handover', STATE.sort[kind]) + '</select></div>' +
@@ -772,9 +838,11 @@ function docaCell (r) {
 
 function queueTable (rows, sortKind) {
   sortKind = sortKind || 'queue';
+  var comHO = sortKind === 'concluidas';            // Last Handover só faz sentido depois do handover
+  var nCols = comHO ? 12 : 11;
   var cap = rows.length > MAX_ROWS;
   var view = cap ? rows.slice(0, MAX_ROWS) : rows;
-  var body = view.map(function (r) {
+  var linha = function (r) {
     return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="queue">' +
       '<td>' + badge(r.farol, 'queue') + '</td>' +
       '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
@@ -782,21 +850,37 @@ function queueTable (rows, sortKind) {
       '<td class="mono">' + dash(r.placa) + '</td>' +
       '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
       '<td class="mono">' + fmtClock(r.soc_arrival_time) + '</td>' +
-'<td>' + delayPill(r) + '</td>' +
       '<td>' + docaCell(r) + '</td>' +
       '<td class="mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : '') + '">' +
         '<span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">' + agingCaption(r.phase, r.soc != null) + '</span></td>' +
-      '<td class="mono">' + fmtClock(r.last_handover_time) + '</td>' +
+      (comHO ? '<td class="mono">' + fmtClock(r.last_handover_time) + '</td>' : '') +
       '<td class="mono">' + fmtDur(r.totalDuration) + '</td>' +
       '<td>' + slaPill(r.slaState) + '</td>' +
       '<td>' + badge(r.farol, 'queue') + '</td>' +
     '</tr>';
-  }).join('');
+  };
+  var body;
+  if (sortKind === 'queue') {
+    // blocos na ordem do trabalho: quem já está na doca, depois quem espera doca, depois o resto
+    var grupos = [
+      { t: 'Descarregando', d: 'já em doca', f: function (r) { return r.phase === 'doca' && r.doca; } },
+      { t: 'Aguardando doca', d: 'chegaram ao SOC e esperam doca', f: function (r) { return r.phase === 'doca' && !r.doca; } },
+      { t: 'Sem chegada registrada', d: 'ainda sem chegada casada no Recebimento', f: function (r) { return r.phase !== 'doca'; } }
+    ];
+    body = grupos.map(function (g) {
+      var rs = view.filter(g.f);
+      if (!rs.length) return '';
+      return '<tr class="grp"><td colspan="' + nCols + '"><b>' + esc(g.t) + '</b><span class="grp-n">' + rs.length + '</span>' +
+        '<span class="grp-d">' + esc(g.d) + '</span></td></tr>' + rs.map(linha).join('');
+    }).join('');
+  } else {
+    body = view.map(linha).join('');
+  }
   return '<div class="tablewrap"><div class="tablescroll"><table class="dt"><thead><tr>' +
     th('Status', null, sortKind) + th('Orders', 'orders', sortKind, true) +
     th('Driver', null, sortKind) + th('Placa', null, sortKind) +
-    th('Last Pickup', 'pickup', sortKind) + th('Chegada ao SOC', null, sortKind) + th('Vs previsto', null, sortKind) + th('Doca', null, sortKind) +
-    th('Aging', 'aging', sortKind) + th('Last Handover', 'handover', sortKind) + th('Tempo total', null, sortKind) +
+    th('Last Pickup', 'pickup', sortKind) + th('Chegada ao SOC', null, sortKind) + th('Doca', null, sortKind) +
+    th('Aging', 'aging', sortKind) + (comHO ? th('Last Handover', 'handover', sortKind) : '') + th('Tempo total', null, sortKind) +
     th('SLA', null, sortKind) + th('Situação', null, sortKind) +
     '</tr></thead><tbody>' + body + '</tbody></table></div>' + capNote(cap, rows.length) + '</div>';
 }
@@ -813,16 +897,14 @@ function pickupTable (rows) {
       '<td class="mono">' + dash(r.placa) + '</td>' +
       '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
       '<td class="mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : '') + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span></td>' +
-'<td>' + delayPill(r) + '</td>' +
-      '<td class="mono">' + fmtClock(r.last_handover_time) + '</td>' +
       '<td>' + pickupSituacao(r) + '</td>' +
     '</tr>';
   }).join('');
   return '<div class="tablewrap"><div class="tablescroll"><table class="dt"><thead><tr>' +
     th('Status', null, 'pickup') + th('Orders', 'orders', 'pickup', true) + th('Coleta', null, 'pickup') +
     th('Driver', null, 'pickup') + th('Placa', null, 'pickup') +
-    th('Last Pickup', 'pickup', 'pickup') + th('Desde Pickup', 'aging', 'pickup') + th('Vs previsto', null, 'pickup') +
-    th('Last Handover', 'handover', 'pickup') + th('Situação', null, 'pickup') +
+    th('Last Pickup', 'pickup', 'pickup') + th('Desde Pickup', 'aging', 'pickup') +
+    th('Situação', null, 'pickup') +
     '</tr></thead><tbody>' + body + '</tbody></table></div>' + capNote(cap, rows.length) + '</div>';
 }
 
@@ -1191,6 +1273,10 @@ document.addEventListener('click', function (e) {
   if (tabBtn) { switchTab(tabBtn.getAttribute('data-tab')); return; }
 
   // cards da Visão Geral
+  var fcd = e.target.closest ? e.target.closest('[data-fcdia]') : null;
+  if (fcd) { FC.dia = fcd.getAttribute('data-fcdia'); forecastCards(); return; }
+  var fcl = e.target.closest ? e.target.closest('[data-fclista]') : null;
+  if (fcl) { FC.lista = !FC.lista; forecastCards(); return; }
   var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
   if (card) { acaoCard(card.getAttribute('data-card')); return; }
 

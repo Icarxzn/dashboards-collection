@@ -616,15 +616,51 @@ body{background:var(--bg);font-family:var(--sans);font-feature-settings:'cv11','
 /* tabelas compactas: todas as colunas cabem na largura da tela */
 .wrap{max-width:1600px}
 .topbar{max-width:1600px}
-table.dt{font-size:11.5px}
-table.dt thead th{padding:8px 7px;white-space:normal;line-height:1.2;font-size:10px;vertical-align:bottom}
-table.dt tbody td{padding:7px 7px;white-space:normal;line-height:1.3}
+table.dt{font-size:15.5px}
+table.dt thead th{padding:12px 10px;white-space:normal;line-height:1.2;font-size:12.5px;vertical-align:bottom}
+table.dt tbody td{padding:12px 10px;white-space:normal;line-height:1.35}
 table.dt tbody td .trip,table.dt tbody td.mono,table.dt tbody td .agebig{white-space:nowrap}
-table.dt .badge{padding:3px 8px 3px 6px;font-size:10.5px}
-table.dt .pill{white-space:normal;line-height:1.25;max-width:180px;display:inline-block}
+table.dt .badge{padding:5px 11px 5px 9px;font-size:13px}
+table.dt .pill{white-space:normal;line-height:1.25;max-width:210px;display:inline-block;font-size:13px}
+table.dt td .agebig{font-size:16px} table.dt td .agecap{font-size:11.5px}
 
 /* aviso do filtro "Acima do SLA" na Visão Geral */
 .slabar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:8px 12px;border-radius:12px;font-size:12px;
   background:color-mix(in srgb,var(--crit) 12%,transparent);border:1px solid color-mix(in srgb,var(--crit) 35%,transparent);color:var(--text)}
 .slabar .btn{margin-left:auto}
+
+/* blocos da Fila (Descarregando / Aguardando doca) */
+table.dt tbody tr.grp{cursor:default;background:none!important}
+table.dt tbody tr.grp td{padding:14px 10px 6px;border-bottom:1px solid var(--border-2);font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-2)}
+table.dt tbody tr.grp td b{color:var(--text);font-weight:700}
+table.dt tbody tr.grp .grp-n{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:11.5px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;letter-spacing:0}
+table.dt tbody tr.grp .grp-d{margin-left:10px;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--text-3)}
+
+/* ---------- Forecast do dia ---------- */
+.fcgrid{display:grid;gap:16px;margin-bottom:16px}
+.fcgrid--3{grid-template-columns:repeat(3,1fr)}
+.fcgrid--4{grid-template-columns:repeat(4,1fr);margin-bottom:0}
+.fc{position:relative;border:1px solid var(--border);border-radius:16px;padding:18px 20px;background:var(--card-bg);box-shadow:var(--shadow);overflow:hidden}
+.fc__l{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-2)}
+.fc__v{font-size:34px;font-weight:800;letter-spacing:-.02em;margin-top:8px;font-variant-numeric:tabular-nums}
+.fcgrid--4 .fc__v{font-size:30px}
+.fc__s{font-size:13px;color:var(--text-2);margin-top:4px}
+.fc__s b{color:var(--text)}
+.fcbar{height:8px;border-radius:99px;background:color-mix(in srgb,var(--text-2) 18%,transparent);margin-top:14px;overflow:hidden}
+.fcbar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.fc--ok .fc__v{color:var(--ok)} .fc--ok .fcbar i{background:var(--ok)}
+.fc--warn .fc__v{color:var(--warn)} .fc--warn .fcbar i{background:var(--warn)}
+.fc--crit .fc__v{color:var(--crit)} .fc--crit .fcbar i{background:var(--crit)}
+.fc--dark{background:#15171C;border-color:#15171C;color:#fff}
+.fc--dark .fc__l{color:rgba(255,255,255,.65)}
+[data-theme="dark"] .fc--dark{background:#000;border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.fc[data-goto]{cursor:pointer;transition:transform .15s ease}
+.fc[data-goto]:hover{transform:translateY(-2px)}
+@media (max-width:900px){.fcgrid--3,.fcgrid--4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:460px){.fcgrid--3,.fcgrid--4{grid-template-columns:1fr}}
+.fc[data-fclista]{cursor:pointer;transition:transform .15s ease}
+.fc[data-fclista]:hover{transform:translateY(-2px)}
+.fcsel{display:inline-flex;gap:2px;padding:3px;border-radius:99px;background:color-mix(in srgb,var(--text-2) 14%,transparent);margin-right:8px;vertical-align:middle}
+.fcsel button{border:0;background:transparent;color:var(--text-2);font:inherit;font-weight:700;font-size:12px;padding:4px 14px;border-radius:99px;cursor:pointer}
+.fcsel button.is-on{background:var(--accent);color:#fff}
 </style>

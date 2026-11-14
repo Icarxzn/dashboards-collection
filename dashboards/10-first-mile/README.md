@@ -25,6 +25,10 @@ concentração de chegadas por hora e as tabelas de cada etapa.
 
 ## Visão Geral (ordem das seções)
 
+0. **Forecast do dia** — aba `Forcast` (uma linha por trip; coluna `Dia` = Hoje/Ontem, ou `trip_ctime`),
+   com seletor **Hoje / Ontem**. Pacotes vêm da FMTrip pelo `trip_id`: previsto = `pedidos`,
+   coletado = `pacotes_coletados`, descarregado = `pacotes_recebidos`; descarga finalizada = `handedover_time`
+   preenchido. Clicar em "Veículos p/ descarga" abre a lista dos veículos do dia.
 1. **Cards principais** — clicáveis: Veículos/Orders na fila → tabela da Fila; Pickup/Orders em pickup →
    tabela do Pickup; **Acima do SLA** → filtra as duas tabelas (aviso com "Mostrar todos"); **Maior aging** →
    abre o detalhe do veículo.
