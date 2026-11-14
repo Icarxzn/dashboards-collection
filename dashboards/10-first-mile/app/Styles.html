@@ -687,4 +687,22 @@ table.dt--fm .prog{min-width:170px}
 .fm-et--trans{background:color-mix(in srgb,#60A5FA 18%,transparent);color:#60A5FA}
 .fm-et--col{background:color-mix(in srgb,#A78BFA 18%,transparent);color:#A78BFA}
 .fm-sub{display:block;margin-top:4px;font-size:11.5px;color:var(--text-3)}
+
+/* Concluídas: resumo do Forecast do dia */
+.concfc{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;margin-top:14px;padding:14px 18px;border:1px solid var(--border);border-radius:14px;background:var(--card-bg);font-size:15px}
+.concfc b{font-size:14px;text-transform:uppercase;letter-spacing:.08em}
+.concfc span{font-weight:700;font-variant-numeric:tabular-nums}
+.concfc i{font-style:normal;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-right:6px}
+.concfc .dim{font-weight:400;font-size:12.5px}
+.concfc--ok{color:var(--ok)} .concfc--warn{color:var(--warn)} .concfc--crit{color:var(--crit)}
+table.dt tbody tr.is-rota{box-shadow:inset 3px 0 0 var(--crit)}
+
+/* Veículos First Mile: filtros no cabeçalho */
+.fmbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-left:auto}
+.fmchips button b{margin-left:4px;font-weight:800}
+.fmchips button:not(.is-on) b{color:var(--text)}
+.fmq{width:240px;height:34px;padding:0 12px;border-radius:99px;font-size:13px}
+.fm-et--done{background:color-mix(in srgb,var(--text-2) 12%,transparent);color:var(--text-2)}
+table.dt tbody tr.is-done{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--text-2) 45%,transparent);opacity:.85}
+@media (max-width:700px){.fmq{width:100%}}
 </style>

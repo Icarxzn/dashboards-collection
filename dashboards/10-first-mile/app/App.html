@@ -35,7 +35,7 @@ var STATE = {
 };
 
 function emptyFilters () {
-  return { q:'', status:'', agency:'', driver:'', placa:'', trip:'', agingMin:'', agingMax:'', ordersMin:'', ordersMax:'' };
+  return { q:'', dia:'', fc:'', status:'', agency:'', driver:'', placa:'', trip:'', agingMin:'', agingMax:'', ordersMin:'', ordersMax:'' };
 }
 
 /* ---------- atalhos DOM ---------- */
@@ -122,7 +122,7 @@ function farolLabel (f, kind) {
   return '—';
 }
 function badge (f, kind) {
-  var cls = f === 'ok' ? 'badge--ok' : f === 'warn' ? 'badge--warn' : f === 'crit' ? 'badge--crit' : 'badge--mut';
+  var cls = f === 'ok' ? (kind === 'pickup' ? 'badge--crit' : 'badge--ok') : f === 'warn' ? 'badge--warn' : f === 'crit' ? 'badge--crit' : 'badge--mut';   // "Em rota" em vermelho: ainda não chegou ao SOC
   return '<span class="badge ' + cls + '"><span class="d"></span>' + esc(farolLabel(f, kind)) + '</span>';
 }
 
@@ -381,7 +381,20 @@ function computeBottleneck (q, p) {
  * FILTRO + ORDENACAO
  * ========================================================== */
 function applyFilters (rows, f, kind) {
+  var fcDias = (STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias) || [];
+  var setFc = null, R = null;
+  if (f.fc) {      // trips do Forecast: do dia escolhido (pelo trip_ctime) ou de todos os dias
+    setFc = {};
+    fcDias.forEach(function (d, i) {
+      if (f.dia !== '' && f.dia != null && i !== +f.dia) return;
+      (d.lista || []).forEach(function (x) { setFc[String(x.trip_id)] = true; });
+    });
+  } else if (f.dia !== '' && f.dia != null) {
+    R = diaRange(+f.dia);   // sem "só Forecast": dia em que o handover aconteceu
+  }
   var out = rows.filter(function (r) {
+    if (setFc && !setFc[String(r.trip_id)]) return false;
+    if (R && (r.ho == null || r.ho < R.ini || r.ho >= R.fim)) return false;
     if (f.status && r.farol !== f.status) return false;
     if (f.sla) {   // atalho do card "Acima do SLA" (mesma regra do card)
       var slaMs = ((STATE.cfg && STATE.cfg.slaMinutes) || 180) * MS.min;
@@ -494,7 +507,7 @@ function buildGeral () {
       '<div class="panel panel__pad" id="gConc"></div></section>' +
     // Fila First Mile e Pickup direto na Visão Geral (mesmas tabelas, filtros e detalhe das abas)
     '<section class="section"><div class="section__head"><h2>Veículos First Mile</h2>' +
-      '<span class="hint" id="fmHint">Fila do SOC e coleta na mesma lista · a coluna Etapa mostra onde cada veículo está</span></div>' +
+      '<div class="fmbar" id="fmBar"></div></div>' +
       '<div id="lReg-fm" data-reg="fm"></div></section>';
 }
 
@@ -600,6 +613,25 @@ function diaRange (qual) {
   var ini = d.getTime(); d.setDate(d.getDate() + 1);
   return { ini: ini, fim: d.getTime() };
 }
+/* Etapa de cada veículo — cada um conta em UMA etapa só:
+ *  coleta     : ainda coletando (trip em andamento ou sellers aguardando)
+ *  realizada  : terminou a coleta há menos de ETAPA_SAIDA_MIN (saindo do último seller)
+ *  desloc     : coleta terminada há mais tempo, ainda sem chegada ao SOC
+ *  chegou     : chegou ao SOC e ainda não entrou na fila do recebimento
+ *  fila       : na fila, sem doca
+ *  receb      : em doca, recebendo                                                      */
+var ETAPA_SAIDA_MIN = 15;
+function etapa (r, kind) {
+  if (kind === 'pickup') {
+    var coletando = r.business_status === 6 || (r.sellers_aguardando || 0) > 0;
+    if (coletando) return 'coleta';
+    return (r.pk != null && STATE.now - r.pk < ETAPA_SAIDA_MIN * MS.min) ? 'realizada' : 'desloc';
+  }
+  if (r.doca) return 'receb';
+  if (r.queue_number) return 'fila';
+  return 'chegou';
+}
+
 function renderFlow () {
   var el = $('#gFlow'); if (!el) return;
   var hoje = !FC.dia, R = diaRange(FC.dia);
@@ -612,10 +644,11 @@ function renderFlow () {
   // Handover = descargas finalizadas do Forecast do dia (aba Forcast, handedover_time); sem Forecast, conta pela fila
   var fd = STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias && STATE.raw.forecast.dias[FC.dia];
   var ho = fd && fd.veiculos ? fd.finalizadas : rowsForKind('concluidas').filter(function (x) { return noDia(x.ho); }).length;
-  el.innerHTML = flowStepper({
-    pickup: p.length, coleta: p.length, deslocamento: p.length,
-    soc: qA.filter(function (x) { return x.soc != null; }).length, fila: qA.length, handover: ho
-  });
+  var n = { coleta: 0, realizada: 0, desloc: 0, chegou: 0, fila: 0, receb: 0 };
+  p.forEach(function (x) { n[etapa(x, 'pickup')]++; });
+  qA.forEach(function (x) { n[etapa(x, 'queue')]++; });
+  n.handover = ho;
+  el.innerHTML = flowStepper(n);
   var dt = new Date(R.ini);
   $('#flowHint').textContent = (hoje ? 'Hoje' : FC.dia === 1 ? 'Ontem' : 'D-' + FC.dia) + ' (' + ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2) +
     ') · handover = descargas finalizadas do Forecast' + (hoje ? ' · em andamento agora' : ' · coletados no dia') + ' · muda com o dia escolhido no Forecast';
@@ -638,7 +671,8 @@ function forecastCards () {
     }).join('') + '</span>' +
     ' Trips da aba Forcast de ' + dd[2] + '/' + dd[1] + ' · pacotes da FMTrip';
   var semDados = f.veiculos > 0 && f.semTrip === f.veiculos;   // trips do dia já saíram da FMTrip
-  var real = f.coletado, falta = Math.max(0, f.previsto - real);
+  // aderência = o que já foi DESCARREGADO no SOC ÷ forecast (o coletado ainda pode estar no caminhão)
+  var real = f.descarregado, falta = Math.max(0, f.previsto - real);
   var ader = f.previsto ? real / f.previsto * 100 : null;
   var nv = ader == null ? '' : ader >= 95 ? 'ok' : ader >= 80 ? 'warn' : 'crit';
   var pend = Math.max(0, f.veiculos - f.finalizadas);
@@ -652,9 +686,9 @@ function forecastCards () {
   $('#gFc').innerHTML = (semDados ? semMsg :
     '<div class="fcgrid fcgrid--3">' +
       fc('', 'Forecast do dia', fmtNum(f.previsto), 'pacotes previstos') +
-      fc('', 'Coletado / Descarregado', fmtNum(real),
+      fc('', 'Descarregado', fmtNum(real),
          (falta ? 'Faltam <b>' + fmtNum(falta) + '</b> pacotes para o forecast' : 'Forecast atingido') +
-         ' · descarregado ' + fmtNum(f.descarregado)) +
+         ' · coletado ' + fmtNum(f.coletado)) +
       fc('fc--' + nv, 'Aderência ao forecast', ader == null ? '—' : ader.toFixed(2).replace('.', ',') + '%', '',
          '<div class="fcbar"><i style="width:' + Math.min(100, ader || 0) + '%"></i></div>') +
     '</div>' + parcial) + '<div class="fcgrid fcgrid--4">' +
@@ -662,7 +696,7 @@ function forecastCards () {
       fc('fc--ok', 'Descarga finalizada', fmtNum(f.finalizadas)) +
       fc(pend ? 'fc--warn' : '', 'Pendentes', fmtNum(pend)) +
       (hoje ? fc('fc--dark', 'Em fila agora', fmtNum(rowsForKind('queue').length), '', '', ' data-goto="fila" title="Ver os veículos na fila"')
-            : fc('fc--dark', 'Coletado ' + (FC.dia === 1 ? 'ontem' : 'em ' + dd[2] + '/' + dd[1]), semDados ? '—' : fmtNum(f.coletado), semDados ? 'sem dados na FMTrip' : 'descarregado ' + fmtNum(f.descarregado))) +
+            : fc('fc--dark', 'Descarregado ' + (FC.dia === 1 ? 'ontem' : 'em ' + dd[2] + '/' + dd[1]), semDados ? '—' : fmtNum(f.descarregado), semDados ? 'sem dados na FMTrip' : 'coletado ' + fmtNum(f.coletado))) +
     '</div>' + (FC.lista ? fcLista(f.lista || []) : '');
 }
 
@@ -690,15 +724,16 @@ function kpi (variant, icon, label, value, sub, small) {
 
 function flowStepper (fl) {
   var nodes = [
-    { n: 'Pickup', s: 'Coleta iniciada', v: fl.pickup },
-    { n: 'Coleta realizada', s: 'First Mile ok', v: fl.coleta },
-    { n: 'Em deslocamento', s: 'A caminho do SOC', v: fl.deslocamento },
-    { n: 'Chegou ao SOC', s: 'No SOC, sem handover', v: fl.soc },
-    { n: 'Fila First Mile', s: 'Aguardando handover', v: fl.fila },
-    { n: 'Handover', s: 'Entregue à operação', v: fl.handover }
+    { n: 'Pickup', s: 'Coletando nos sellers', v: fl.coleta },
+    { n: 'Coleta realizada', s: 'Saindo do último seller', v: fl.realizada },
+    { n: 'Em deslocamento', s: 'A caminho do SOC', v: fl.desloc },
+    { n: 'Chegou ao SOC', s: 'Ainda sem fila / doca', v: fl.chegou },
+    { n: 'Fila', s: 'Aguardando doca', v: fl.fila },
+    { n: 'Recebendo', s: 'Em doca, descarregando', v: fl.receb },
+    { n: 'Handover', s: 'Descarga finalizada', v: fl.handover }
   ];
   var peak = -1;
-  [fl.pickup, fl.soc, fl.fila, fl.handover].forEach(function (v) { if (v != null && v > peak) peak = v; });
+  nodes.forEach(function (nd) { if (nd.v != null && nd.v > peak) peak = nd.v; });
   var html = '<div class="flow">';
   nodes.forEach(function (nd, i) {
     if (i > 0) html += '<div class="flow__arrow">' + svg(IC.arrowR) + '</div>';
@@ -771,15 +806,49 @@ function buildList (kind) {
   $('#view').innerHTML =
     '<section class="section"><div class="section__head"><h2>' + esc(m.title) + '</h2>' +
       '<span class="hint">' + esc(m.hint) + '</span></div>' +
-      '<div class="kpigrid" id="lKpis"></div></section>' +
+      '<div class="kpigrid" id="lKpis"></div>' + (kind === 'concluidas' ? '<div id="lFc"></div>' : '') + '</section>' +
     '<section class="section">' + filterBar(kind) + '<div id="lReg"></div></section>';
+}
+
+/* Concluídas: resumo do Forecast do dia escolhido no filtro "Dia" */
+function concResumoFc (rows) {
+  var el = $('#lFc'); if (!el) return;
+  var f = STATE.f.concluidas, ds = (STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias) || [];
+  if (f.dia === '' || f.dia == null || !ds[+f.dia]) { el.innerHTML = ''; return; }
+  var d = ds[+f.dia], p = d.dia.split('-');
+  var semDados = d.veiculos > 0 && d.semTrip === d.veiculos;
+  var ader = d.previsto && !semDados ? (d.descarregado / d.previsto * 100) : null;
+  var cls = ader == null ? '' : ader >= 95 ? 'ok' : ader >= 80 ? 'warn' : 'crit';
+  el.innerHTML = '<div class="concfc">' +
+    '<b>Forecast de ' + p[2] + '/' + p[1] + '</b>' +
+    '<span><i>Programadas</i>' + fmtNum(d.veiculos) + '</span>' +
+    '<span><i>Finalizadas</i>' + fmtNum(d.finalizadas) + '</span>' +
+    '<span><i>Pendentes</i>' + fmtNum(Math.max(0, d.veiculos - d.finalizadas)) + '</span>' +
+    (semDados ? '<span class="dim">pacotes desse dia não estão mais na FMTrip</span>' :
+      '<span><i>Descarregado</i>' + fmtNum(d.descarregado) + ' de ' + fmtNum(d.previsto) + '</span>' +
+      '<span class="concfc__ad concfc--' + cls + '"><i>Aderência</i>' + (ader == null ? '—' : ader.toFixed(2).replace('.', ',') + '%') + '</span>') +
+    '<span class="dim">' + (f.fc ? 'lista abaixo: só as trips do Forecast desse dia' : 'lista abaixo: handover nesse dia (todas as trips) · use "Trips: Só do Forecast"') + '</span>' +
+  '</div>';
 }
 
 function filterBar (kind) {
   var f = STATE.f[kind];
   var agencies = uniqueSorted(rowsForKind(kind).map(function (x) { return x.agency_name; }));
   var opt = function (v, l, cur) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(l) + '</option>'; };
-  return '<div class="filters" data-kind="' + kind + '">' +
+  var diaSel = '';
+  if (kind === 'concluidas') {
+    var ds = (STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias) || [];
+    var nomeDia = function (i) {
+      if (i === 0) return 'Hoje'; if (i === 1) return 'Ontem';
+      var d = new Date(diaRange(i).ini); return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' (D-' + i + ')';
+    };
+    var opts = opt('', 'Todos', String(f.dia));
+    for (var i = 0; i <= Math.max(7, ds.length - 1); i++) opts += opt(String(i), nomeDia(i), String(f.dia));
+    diaSel = '<div class="field field--sm"><label>Dia</label><select class="sel" data-f="dia">' + opts + '</select></div>' +
+      '<div class="field field--sm"><label>Trips</label><select class="sel" data-f="fc">' +
+        opt('', 'Todas', f.fc) + opt('1', 'Só do Forecast', f.fc) + '</select></div>';
+  }
+  return '<div class="filters" data-kind="' + kind + '">' + diaSel +
     '<div class="field field--search field--grow"><label>Busca</label>' +
       '<input class="inp" type="text" data-f="q" placeholder="Trip, agência, motorista, placa…" value="' + esc(f.q) + '"></div>' +
     '<div class="field field--sm"><label>Status</label><select class="sel" data-f="status">' +
@@ -806,6 +875,7 @@ function filterBar (kind) {
 
 function fillList (kind) {
   var rows = rowsForKind(kind);
+  if (kind === 'concluidas') rows = applyFilters(rows, STATE.f[kind], kind);   // cards acompanham Dia / Forecast / filtros
   var cfg = STATE.cfg || {};
   var m = LIST_META[kind];
 
@@ -825,6 +895,7 @@ function fillList (kind) {
     kpi(warn > 0 ? 'warn' : 'ok', IC.alert, 'Atenção', String(warn), ''),
     kpi(crit > 0 ? 'crit' : 'ok', IC.alert, 'Crítico', String(crit), '')
   ].join('');
+  if (kind === 'concluidas') concResumoFc(rows);
 
   renderRegion(kind);
 }
@@ -853,20 +924,56 @@ function renderRegion (kind) {
 }
 
 /* Visão Geral: Fila e Pickup juntos, separados em "Em fila" e "Em coleta" */
+var FMV = { v: 'todos', q: '' };   // visão da tabela Veículos First Mile
 function renderFm () {
   var reg = $('#lReg-fm'); if (!reg) return;
   var allQ = rowsForKind('queue'), allP = rowsForKind('pickup');
-  var q = applyFilters(allQ, STATE.f.queue, 'queue'), p = applyFilters(allP, STATE.f.pickup, 'pickup');
-  var tot = allQ.length + allP.length, vis = q.length + p.length;
+  var R = diaRange(FC.dia);   // concluídos do dia escolhido no Forecast
+  // Concluídos = trips do Forecast desse dia já descarregadas (mesma conta do card "Descarga finalizada").
+  // Sem Forecast no dia, cai para "handover nesse dia".
+  var fd = STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias && STATE.raw.forecast.dias[FC.dia];
+  var allC;
+  if (fd && fd.veiculos) {
+    var porTrip = {};
+    STATE.queue.forEach(function (x) { porTrip[String(x.trip_id)] = x; });
+    allC = (fd.lista || []).filter(function (e) { return e.handover; }).map(function (e) {
+      var r = porTrip[String(e.trip_id)];
+      if (r) { r = shallow(r); r.last_handover_time = e.handover; r.ho = t(e.handover); if (!r.placa) r.placa = e.placa; return r; }
+      return { trip_id: e.trip_id, driver_name: e.agencia || '', placa: e.placa, qtd_order: e.previsto, last_handover_time: e.handover,
+               ho: t(e.handover), last_pickup_time: null, soc_arrival_time: null, totalDuration: null, dockTime: null, slaState: 'na' };
+    });
+  } else {
+    allC = rowsForKind('concluidas').filter(function (x) { return x.ho != null && x.ho >= R.ini && x.ho < R.fim; });
+  }
+  allC.sort(function (a, b) { return (b.ho || 0) - (a.ho || 0); });
+  var q = applyFilters(allQ, STATE.f.queue, 'queue'), p = applyFilters(allP, STATE.f.pickup, 'pickup'), c = allC;
+  var busca = ci(FMV.q || '');
+  if (busca) {
+    var bate = function (r) { return ci([r.driver_name, r.placa, r.trip_id, r.agency_name, r.doca].join(' ')).indexOf(busca) >= 0; };
+    q = q.filter(bate); p = p.filter(bate); c = c.filter(bate);
+  }
+  var nomeDia = !FC.dia ? 'hoje' : FC.dia === 1 ? 'ontem' : (function () { var d = new Date(R.ini); return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2); })();
+  var chip = function (v, l, n) { return '<button data-fmv="' + v + '" class="' + (FMV.v === v ? 'is-on' : '') + '">' + l + ' <b>' + n + '</b></button>'; };
+  var bar = $('#fmBar');
+  if (bar) {
+    var inp = bar.querySelector('input'), foco = inp && document.activeElement === inp;
+    var chips = '<span class="fcsel fmchips">' + chip('todos', 'Todos', q.length + p.length + c.length) + chip('fila', 'Em fila', q.length) +
+      chip('coleta', 'Em coleta', p.length) + chip('conc', 'Concluídos ' + nomeDia, c.length) + '</span>';
+    if (!inp) bar.innerHTML = chips + '<input class="inp fmq" type="search" data-fmq placeholder="Buscar motorista, placa, trip…" value="' + esc(FMV.q) + '">';
+    else { bar.querySelector('.fmchips').outerHTML = chips; if (foco) inp.focus(); }
+  }
+  if (FMV.v === 'fila') { p = []; c = []; }
+  else if (FMV.v === 'coleta') { q = []; c = []; }
+  else if (FMV.v === 'conc') { q = []; p = []; }
   var soSla = (STATE.f.queue && STATE.f.queue.sla) || (STATE.f.pickup && STATE.f.pickup.sla);
-  if (!tot) { reg.innerHTML = emptyState('Nenhum veículo encontrado no momento.'); return; }
-  var aviso = soSla ? '<div class="slabar">' + (vis ? 'Mostrando só os veículos acima do SLA · ' + vis + ' de ' + tot : 'Nenhum veículo acima do SLA agora') +
-    ' <button class="btn btn--sm" data-clear="fm">Mostrar todos</button></div>' : '';
-  if (!vis) { reg.innerHTML = aviso; return; }
-  reg.innerHTML = aviso + fmTable(q, p);
+  var vis = q.length + p.length + c.length;
+  var aviso = soSla ? '<div class="slabar">Mostrando só os veículos acima do SLA <button class="btn btn--sm" data-clear="fm">Mostrar todos</button></div>' : '';
+  if (!vis) { reg.innerHTML = aviso + emptyState(busca ? 'Nenhum veículo encontrado para "' + FMV.q + '".' : 'Nenhum veículo nesta visão.'); return; }
+  reg.innerHTML = aviso + fmTable(q, p, c);
 }
 
-function fmTable (q, p) {
+function fmTable (q, p, c) {
+  c = c || [];
   var N = 7, k = 'fm';
   var ageCls = function (r) { return 'age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : ''); };
   var docaCurta = function (d) { var m = String(d || '').match(/(\d+)/); return m ? 'Doca ' + m[1] : (d || 'Doca'); };
@@ -877,31 +984,46 @@ function fmTable (q, p) {
     return '<div class="fm-hrs"><span><i>' + la + '</i>' + fmtClock(a) + '</span>' + (lb ? '<span><i>' + lb + '</i>' + (b ? fmtClock(b) : '—') + '</span>' : '') + '</div>';
   };
   var linhaQ = function (r) {
-    var etapa = r.phase === 'doca' && r.doca ? '<span class="fm-et fm-et--doca">Descarregando · ' + esc(docaCurta(r.doca)) + '</span>'
-      : r.phase === 'doca' ? '<span class="fm-et fm-et--wait">Em fila · aguardando doca</span>'
-      : '<span class="fm-et">Sem chegada registrada</span>';
+    var e = etapa(r, 'queue');
+    var etq = e === 'receb' ? '<span class="fm-et fm-et--doca">Recebendo · ' + esc(docaCurta(r.doca)) + '</span>'
+      : e === 'fila' ? '<span class="fm-et fm-et--wait">Fila · aguardando doca</span>'
+      : '<span class="fm-et">Chegou ao SOC</span>';
     return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="queue">' +
       '<td>' + badge(r.farol, 'queue') + '</td>' +
       '<td>' + quem(r) + '</td>' +
       '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
-      '<td>' + etapa + '</td>' +
+      '<td>' + etq + '</td>' +
       '<td>' + horas(r.last_pickup_time, 'Coleta', r.soc_arrival_time, 'SOC') + '</td>' +
       '<td class="mono ' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">no SOC · total ' + fmtDur(r.totalDuration) + '</span></td>' +
       '<td>' + slaPill(r.slaState) + '</td>' +
     '</tr>';
   };
-  var transito = function (r) { return r.paradas && (r.paradas_feitas || 0) >= r.paradas; };
+  var transito = function (r) { return etapa(r, 'pickup') !== 'coleta'; };
   var linhaP = function (r) {
-    var et = transito(r) ? '<span class="fm-et fm-et--trans">Em trânsito p/ SOC</span>' : '<span class="fm-et fm-et--col">Em coleta</span>';
-    var det = r.paradas ? '<span class="fm-sub">' + (r.paradas_feitas || 0) + '/' + r.paradas + ' paradas' +
-      (r.pacotes_a_caminho ? ' · ' + fmtNum(r.pacotes_a_caminho) + ' a caminho' : '') + '</span>' : '';
-    return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="pickup">' +
+    var e = etapa(r, 'pickup');
+    var et = e === 'coleta' ? '<span class="fm-et fm-et--col">Pickup · coletando</span>'
+      : e === 'realizada' ? '<span class="fm-et fm-et--col">Coleta realizada</span>'
+      : '<span class="fm-et fm-et--trans">Em deslocamento p/ SOC</span>';
+    var det = '<span class="fm-sub">' + (r.sellers ? ((r.sellers_coletados || 0) + '/' + r.sellers + ' sellers') : '') +
+      (r.pacotes_a_caminho ? (r.sellers ? ' · ' : '') + fmtNum(r.pacotes_a_caminho) + ' pacotes a caminho' : '') + '</span>';
+    return '<tr class="is-' + r.farol + (r.farol === 'ok' ? ' is-rota' : '') + '" data-trip="' + esc(r.trip_id) + '" data-kind="pickup">' +
       '<td>' + badge(r.farol, 'pickup') + '</td>' +
       '<td>' + quem(r) + '</td>' +
       '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
       '<td>' + et + det + '</td>' +
       '<td>' + horas(r.last_pickup_time, 'Coleta') + '</td>' +
       '<td class="mono ' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span><span class="agecap">desde a coleta</span></td>' +
+      '<td>' + slaPill(r.slaState) + '</td>' +
+    '</tr>';
+  };
+  var linhaC = function (r) {
+    return '<tr class="is-done" data-trip="' + esc(r.trip_id) + '" data-kind="concluidas">' +
+      '<td><span class="badge badge--ok"><span class="d"></span>Concluído</span></td>' +
+      '<td>' + quem(r) + '</td>' +
+      '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
+      '<td><span class="fm-et fm-et--done">Handover ' + fmtClock(r.last_handover_time) + '</span></td>' +
+      '<td>' + horas(r.last_pickup_time, 'Coleta', r.soc_arrival_time, 'SOC') + '</td>' +
+      '<td class="mono"><span class="agebig">' + fmtDur(r.dockTime != null ? r.dockTime : r.ref) + '</span><span class="agecap">em doca · total ' + fmtDur(r.totalDuration) + '</span></td>' +
       '<td>' + slaPill(r.slaState) + '</td>' +
     '</tr>';
   };
@@ -912,12 +1034,11 @@ function fmTable (q, p) {
   // ordem da operação: descarregando, aguardando doca, sem chegada, em trânsito, em coleta
   var ordem = function (x) {
     var r = x.r;
-    if (x.k === 'q') return r.phase === 'doca' && r.doca ? 0 : r.phase === 'doca' ? 1 : 2;
-    return transito(r) ? 3 : 4;
+    return { receb: 0, fila: 1, chegou: 2, desloc: 3, realizada: 4, coleta: 5 }[etapa(r, x.k === 'q' ? 'queue' : 'pickup')];
   };
   var todos = q.map(function (r, i) { return { r: r, k: 'q', i: i }; }).concat(p.map(function (r, i) { return { r: r, k: 'p', i: i }; }));
   todos.sort(function (a, b) { return ordem(a) - ordem(b) || a.i - b.i; });
-  var body = todos.map(function (x) { return x.k === 'q' ? linhaQ(x.r) : linhaP(x.r); }).join('');
+  var body = todos.map(function (x) { return x.k === 'q' ? linhaQ(x.r) : linhaP(x.r); }).join('') + c.map(linhaC).join('');
   return '<div class="tablewrap"><div class="tablescroll"><table class="dt dt--fm"><thead><tr>' +
     th('Status', null, k) + th('Motorista / placa', null, k) + th('Orders', 'orders', k, true) +
     th('Etapa', null, k) + th('Horários', 'pickup', k) + th('Aging', 'aging', k) + th('SLA', null, k) +
@@ -1383,8 +1504,10 @@ document.addEventListener('click', function (e) {
   if (tabBtn) { switchTab(tabBtn.getAttribute('data-tab')); return; }
 
   // cards da Visão Geral
+  var fmv = e.target.closest ? e.target.closest('[data-fmv]') : null;
+  if (fmv) { FMV.v = fmv.getAttribute('data-fmv'); renderFm(); return; }
   var fcd = e.target.closest ? e.target.closest('[data-fcdia]') : null;
-  if (fcd) { FC.dia = +fcd.getAttribute('data-fcdia') || 0; forecastCards(); renderFlow(); return; }
+  if (fcd) { FC.dia = +fcd.getAttribute('data-fcdia') || 0; forecastCards(); renderFlow(); renderFm(); return; }
   var fcl = e.target.closest ? e.target.closest('[data-fclista]') : null;
   if (fcl) { FC.lista = !FC.lista; forecastCards(); return; }
   var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
@@ -1429,12 +1552,13 @@ document.addEventListener('click', function (e) {
 });
 
 document.addEventListener('input', function (e) {
+  if (e.target.hasAttribute && e.target.hasAttribute('data-fmq')) { FMV.q = e.target.value; renderFm(); return; }
   var f = e.target.getAttribute && e.target.getAttribute('data-f');
   if (!f) return;
   var box = e.target.closest('.filters');
   var kind = box ? box.getAttribute('data-kind') : kindForTab();
   STATE.f[kind][f] = e.target.value;
-  renderRegion(kind);
+  if (kind === 'concluidas' && STATE.tab === 'concluidas') fillList(kind); else renderRegion(kind);
 });
 document.addEventListener('change', function (e) {
   if (e.target.getAttribute && e.target.getAttribute('data-sort') != null) {

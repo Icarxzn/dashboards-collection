@@ -38,7 +38,7 @@ var APP_VERSION = '2.0.0';
 /** Colunas lidas de cada aba (cabecalhos normalizados). */
 var TRIP_COLS = ['trip_id', 'route_display_name', 'cluster_name', 'vehicle_type', 'driver_id', 'driver_name',
   'agency_id', 'business_status', 'primeira_coleta', 'ultima_coleta', 'chegou_soc', 'ultimo_inbound',
-  'pedidos', 'pacotes_coletados', 'pacotes_a_caminho', 'pacotes_recebidos',
+  'pedidos', 'pacotes_coletados', 'pacotes_a_caminho', 'pacotes_recebidos', 'sellers_aguardando',
   'saida_prevista', 'chegada_prevista', 'paradas', 'paradas_feitas', 'sellers', 'sellers_coletados'];
 var FORECAST_COLS = ['trip_ctime', 'dia', 'trip_id', 'route_name', 'vehicle_real', 'vehicle_plate', 'driver_start_time',
   'agency_name', 'handedover_time', 'portuguese_business_status'];
@@ -204,6 +204,8 @@ function getPayload() {
         paradas_feitas: toInt_(t.paradas_feitas),
         sellers: toInt_(t.sellers),
         sellers_coletados: toInt_(t.sellers_coletados),
+        sellers_aguardando: toInt_(t.sellers_aguardando),
+        business_status: num_(t.business_status),   // 6 = trip em andamento (coletando), 2 = coleta concluida
         _rows: 1
       };
 
