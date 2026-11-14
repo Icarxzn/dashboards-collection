@@ -38,8 +38,11 @@ concentração de chegadas por hora e as tabelas de cada etapa.
    (desde 06:00; chegada da aba Recebimento, ou Handover se não houver) + parte tracejada com os que ainda estão
    em **pickup**, pela `chegada_prevista` da FMTrip. Faixas: **≤ 2** confortável · **3–4** no limite ·
    **≥ 5** acima da capacidade (linha tracejada em 4). Ajuste em `CONC = { ok: 2, limite: 4 }` no `App.html`.
-5. **Fila First Mile** — tabela (sem barra de filtros na Visão Geral; clique na linha abre o detalhe).
-6. **Pickup** — tabela.
+5. **Veículos First Mile** — uma tabela só, em dois blocos: **Em fila** (Descarregando / Aguardando doca /
+   Sem chegada) e **Em coleta** (Pickup). Sem barra de filtros na Visão Geral; clique na linha abre o detalhe.
+
+O **Fluxo operacional** segue o Hoje / Ontem do Forecast: Handover conta as concluídas com handover naquele dia;
+em "Ontem" as etapas em andamento contam só os veículos coletados naquele dia.
 
 A aba **Concluídas** mantém a barra de filtros completa. As abas Fila/Pickup existem no código, mas ficam
 escondidas (o conteúdo está na Visão Geral).

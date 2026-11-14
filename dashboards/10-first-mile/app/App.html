@@ -484,7 +484,7 @@ function buildGeral () {
       '<span class="hint">Panorama de veículos, orders e exceções</span></div>' +
       '<div class="kpigrid" id="gKpis"></div></section>' +
     '<section class="section"><div class="section__head"><h2>Fluxo operacional</h2>' +
-      '<span class="hint">Onde o volume está concentrado agora</span></div>' +
+      '<span class="hint" id="flowHint">Onde o volume está concentrado agora</span></div>' +
       '<div id="gFlow"></div></section>' +
     '<section class="section"><div class="section__head"><h2>Onde está o gargalo?</h2>' +
       '<span class="hint">Diagnóstico baseado nos dados atuais</span></div>' +
@@ -493,12 +493,9 @@ function buildGeral () {
       '<span class="hint" id="concHint"></span></div>' +
       '<div class="panel panel__pad" id="gConc"></div></section>' +
     // Fila First Mile e Pickup direto na Visão Geral (mesmas tabelas, filtros e detalhe das abas)
-    '<section class="section"><div class="section__head"><h2>Fila First Mile</h2>' +
-      '<span class="hint">Veículos já no SOC aguardando handover</span></div>' +
-      '<div id="lReg-queue" data-reg="queue"></div></section>' +
-    '<section class="section"><div class="section__head"><h2>Pickup</h2>' +
-      '<span class="hint">Coletaram o First Mile e ainda não chegaram ao SOC</span></div>' +
-      '<div id="lReg-pickup" data-reg="pickup"></div></section>';
+    '<section class="section"><div class="section__head"><h2>Veículos First Mile</h2>' +
+      '<span class="hint">Em fila no SOC e em coleta (Pickup), na mesma tabela</span></div>' +
+      '<div id="lReg-fm" data-reg="fm"></div></section>';
 }
 
 function fillGeral () {
@@ -527,7 +524,7 @@ function fillGeral () {
   });
 
   forecastCards();
-  $('#gFlow').innerHTML = flowStepper(a.flow);
+  renderFlow();
   $('#gBott').innerHTML = bottleneckCard(a.bottleneck);
   $('#gConc').innerHTML = concChart();
   renderRegion('queue');    // tabela da fila na Visão Geral
@@ -592,6 +589,34 @@ function concChart () {
     lg(COR.ok, 'Confortável ≤ ' + CONC.ok) + lg(COR.lim, 'No limite ' + (CONC.ok + 1) + '–' + CONC.limite) + lg(COR.over, 'Acima da capacidade ≥ ' + (CONC.limite + 1)) +
     lg('transparent', 'Previsto (ainda em pickup)', 'border:1px dashed var(--text-2)') +
     '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:18px;border-top:2px dashed var(--text-2)"></i>Capacidade</span></div>';
+}
+
+/* Fluxo operacional do dia escolhido no Forecast (Hoje / Ontem).
+ * Handover = concluídas com handover naquele dia; as etapas em andamento contam os veículos
+ * cuja coleta (Last Pickup) foi naquele dia — em "Hoje" entram todos que ainda estão em andamento. */
+function diaRange (qual) {
+  var d = new Date(STATE.now); d.setHours(0, 0, 0, 0);
+  if (qual === 'ontem') d.setDate(d.getDate() - 1);
+  var ini = d.getTime(); d.setDate(d.getDate() + 1);
+  return { ini: ini, fim: d.getTime() };
+}
+function renderFlow () {
+  var el = $('#gFlow'); if (!el) return;
+  var hoje = FC.dia !== 'ontem', R = diaRange(FC.dia);
+  var noDia = function (ts) { return ts != null && ts >= R.ini && ts < R.fim; };
+  var p = STATE.pickup, qA = rowsForKind('queue');
+  if (!hoje) {
+    p = p.filter(function (x) { return noDia(x.pk); });
+    qA = qA.filter(function (x) { return noDia(t(x.last_pickup_time)) || noDia(x.soc); });
+  }
+  var ho = rowsForKind('concluidas').filter(function (x) { return noDia(x.ho); }).length;
+  el.innerHTML = flowStepper({
+    pickup: p.length, coleta: p.length, deslocamento: p.length,
+    soc: qA.filter(function (x) { return x.soc != null; }).length, fila: qA.length, handover: ho
+  });
+  var dt = new Date(R.ini);
+  $('#flowHint').textContent = (hoje ? 'Hoje' : 'Ontem') + ' (' + ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2) +
+    ') · handover no dia' + (hoje ? ' · em andamento agora' : ' · coletados no dia') + ' · muda com o Hoje / Ontem do Forecast';
 }
 
 /* ---------- Forecast (aba Forcast + pacotes da FMTrip), com escolha Hoje / Ontem ---------- */
@@ -795,6 +820,7 @@ function fillList (kind) {
 }
 
 function renderRegion (kind) {
+  if ((kind === 'queue' || kind === 'pickup' || kind === 'fm') && $('#lReg-fm')) { renderFm(); return; }
   var reg = $('#lReg-' + kind) || $('#lReg'); if (!reg) return;   // Visão Geral tem uma área por tipo
   var rows = rowsForKind(kind);
   var filtered = applyFilters(rows, STATE.f[kind], kind);
@@ -814,6 +840,83 @@ function renderRegion (kind) {
     ? '<div class="slabar">Mostrando só os veículos acima do SLA · ' + filtered.length + ' de ' + rows.length +
       ' <button class="btn btn--sm" data-clear="' + kind + '">Mostrar todos</button></div>' : '';
   reg.innerHTML = aviso + (LIST_META[kind].table === 'queue' ? queueTable(filtered, kind) : pickupTable(filtered));
+}
+
+/* Visão Geral: Fila e Pickup juntos, separados em "Em fila" e "Em coleta" */
+function renderFm () {
+  var reg = $('#lReg-fm'); if (!reg) return;
+  var allQ = rowsForKind('queue'), allP = rowsForKind('pickup');
+  var q = applyFilters(allQ, STATE.f.queue, 'queue'), p = applyFilters(allP, STATE.f.pickup, 'pickup');
+  var tot = allQ.length + allP.length, vis = q.length + p.length;
+  var soSla = (STATE.f.queue && STATE.f.queue.sla) || (STATE.f.pickup && STATE.f.pickup.sla);
+  if (!tot) { reg.innerHTML = emptyState('Nenhum veículo encontrado no momento.'); return; }
+  var aviso = soSla ? '<div class="slabar">' + (vis ? 'Mostrando só os veículos acima do SLA · ' + vis + ' de ' + tot : 'Nenhum veículo acima do SLA agora') +
+    ' <button class="btn btn--sm" data-clear="fm">Mostrar todos</button></div>' : '';
+  if (!vis) { reg.innerHTML = aviso; return; }
+  reg.innerHTML = aviso + fmTable(q, p);
+}
+
+function fmTable (q, p) {
+  var N = 11, k = 'fm';
+  var ageCls = function (r) { return 'mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : ''); };
+  var linhaQ = function (r) {
+    return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="queue">' +
+      '<td>' + badge(r.farol, 'queue') + '</td>' +
+      '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
+      '<td>' + dash(r.driver_name) + '</td>' +
+      '<td class="mono">' + dash(r.placa) + '</td>' +
+      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
+      '<td class="mono">' + fmtClock(r.soc_arrival_time) + '</td>' +
+      '<td>' + docaCell(r) + '</td>' +
+      '<td class="' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">' + agingCaption(r.phase, r.soc != null) + '</span></td>' +
+      '<td class="mono">' + fmtDur(r.totalDuration) + '</td>' +
+      '<td>' + slaPill(r.slaState) + '</td>' +
+      '<td>' + badge(r.farol, 'queue') + '</td>' +
+    '</tr>';
+  };
+  var linhaP = function (r) {
+    return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="pickup">' +
+      '<td>' + badge(r.farol, 'pickup') + '</td>' +
+      '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
+      '<td>' + dash(r.driver_name) + '</td>' +
+      '<td class="mono">' + dash(r.placa) + '</td>' +
+      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
+      '<td class="mono dim">—</td>' +
+      '<td>' + progCell(r) + '</td>' +
+      '<td class="' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span><span class="agecap">desde pickup</span></td>' +
+      '<td class="mono dim">—</td>' +
+      '<td>' + slaPill(r.slaState) + '</td>' +
+      '<td>' + pickupSituacao(r) + '</td>' +
+    '</tr>';
+  };
+  var cab = function (cls, t, n, d) {
+    return '<tr class="grp grp--main ' + cls + '"><td colspan="' + N + '"><b>' + esc(t) + '</b><span class="grp-n">' + n + '</span>' +
+      '<span class="grp-d">' + esc(d) + '</span></td></tr>';
+  };
+  var sub = function (t, n, d) {
+    return '<tr class="grp grp--sub"><td colspan="' + N + '"><b>' + esc(t) + '</b><span class="grp-n">' + n + '</span>' +
+      (d ? '<span class="grp-d">' + esc(d) + '</span>' : '') + '</td></tr>';
+  };
+  var body = '';
+  if (q.length) {
+    body += cab('grp--fila', 'Em fila', q.length, 'já no SOC, aguardando handover');
+    [
+      { t: 'Descarregando', d: 'já em doca', f: function (r) { return r.phase === 'doca' && r.doca; } },
+      { t: 'Aguardando doca', d: 'chegaram ao SOC e esperam doca', f: function (r) { return r.phase === 'doca' && !r.doca; } },
+      { t: 'Sem chegada registrada', d: 'ainda sem chegada casada no Recebimento', f: function (r) { return r.phase !== 'doca'; } }
+    ].forEach(function (g) {
+      var rs = q.filter(g.f);
+      if (rs.length) body += sub(g.t, rs.length, g.d) + rs.map(linhaQ).join('');
+    });
+  }
+  if (p.length) {
+    body += cab('grp--coleta', 'Em coleta', p.length, 'coletaram o First Mile e ainda não chegaram ao SOC') + p.map(linhaP).join('');
+  }
+  return '<div class="tablewrap"><div class="tablescroll"><table class="dt dt--fm"><thead><tr>' +
+    th('Status', null, k) + th('Orders', 'orders', k, true) + th('Driver', null, k) + th('Placa', null, k) +
+    th('Last Pickup', 'pickup', k) + th('Chegada ao SOC', null, k) + th('Doca / Coleta', null, k) +
+    th('Aging', 'aging', k) + th('Tempo total', null, k) + th('SLA', null, k) + th('Situação', null, k) +
+    '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
 }
 
 function th (label, sortKey, kind, right) {
@@ -1245,7 +1348,9 @@ function kindForTab (tab) {
 
 /* ---------- cards clicáveis da Visão Geral ---------- */
 function irParaTabela (kind) {
-  var reg = $('#lReg-' + kind);
+  var reg = $('#lReg-' + kind) || $('#lReg-fm');
+  var grp = reg && reg.querySelector(kind === 'pickup' ? 'tr.grp--coleta' : 'tr.grp--fila');
+  if (grp) { grp.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   var sec = reg && reg.closest('.section');
   if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1274,7 +1379,7 @@ document.addEventListener('click', function (e) {
 
   // cards da Visão Geral
   var fcd = e.target.closest ? e.target.closest('[data-fcdia]') : null;
-  if (fcd) { FC.dia = fcd.getAttribute('data-fcdia'); forecastCards(); return; }
+  if (fcd) { FC.dia = fcd.getAttribute('data-fcdia'); forecastCards(); renderFlow(); return; }
   var fcl = e.target.closest ? e.target.closest('[data-fclista]') : null;
   if (fcl) { FC.lista = !FC.lista; forecastCards(); return; }
   var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
@@ -1298,6 +1403,7 @@ document.addEventListener('click', function (e) {
     var key = thEl.getAttribute('data-th');
     var cur = STATE.sort[kind];
     STATE.sort[kind] = (cur === key + '_desc') ? key + '_asc' : key + '_desc';
+    if (kind === 'fm') { STATE.sort.queue = STATE.sort.pickup = STATE.sort.fm; }
     var selEl = $('.filters[data-kind="' + kind + '"] [data-sort]');
     if (selEl) selEl.value = STATE.sort[kind];
     renderRegion(kind);
@@ -1307,7 +1413,8 @@ document.addEventListener('click', function (e) {
   var clr = e.target.closest ? e.target.closest('[data-clear]') : null;
   if (clr) {
     var k = clr.getAttribute('data-clear');
-    STATE.f[k] = emptyFilters();
+    if (k === 'fm') { STATE.f.queue = emptyFilters(); STATE.f.pickup = emptyFilters(); }
+    else STATE.f[k] = emptyFilters();
     STATE.built = null; render();
     return;
   }
