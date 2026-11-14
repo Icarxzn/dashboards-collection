@@ -25,8 +25,8 @@ concentração de chegadas por hora e as tabelas de cada etapa.
 
 ## Visão Geral (ordem das seções)
 
-0. **Forecast do dia** — aba `Forcast` (uma linha por trip; coluna `Dia` = Hoje/Ontem, ou `trip_ctime`),
-   com seletor **Hoje / Ontem**. Pacotes vêm da FMTrip pelo `trip_id`: previsto = `pedidos`,
+0. **Forecast do dia** — aba `Forcast` (uma linha por trip, agrupada por `trip_ctime`), com seletor de
+   **Hoje até D-7**. Dia cujas trips já saíram da FMTrip mostra um aviso em vez de pacotes zerados. Pacotes vêm da FMTrip pelo `trip_id`: previsto = `pedidos`,
    coletado = `pacotes_coletados`, descarregado = `pacotes_recebidos`; descarga finalizada = `handedover_time`
    preenchido. Clicar em "Veículos p/ descarga" abre a lista dos veículos do dia.
 1. **Cards principais** — clicáveis: Veículos/Orders na fila → tabela da Fila; Pickup/Orders em pickup →
@@ -38,11 +38,12 @@ concentração de chegadas por hora e as tabelas de cada etapa.
    (desde 06:00; chegada da aba Recebimento, ou Handover se não houver) + parte tracejada com os que ainda estão
    em **pickup**, pela `chegada_prevista` da FMTrip. Faixas: **≤ 2** confortável · **3–4** no limite ·
    **≥ 5** acima da capacidade (linha tracejada em 4). Ajuste em `CONC = { ok: 2, limite: 4 }` no `App.html`.
-5. **Veículos First Mile** — uma tabela só, em dois blocos: **Em fila** (Descarregando / Aguardando doca /
-   Sem chegada) e **Em coleta** (Pickup). Sem barra de filtros na Visão Geral; clique na linha abre o detalhe.
+5. **Veículos First Mile** — uma lista só (fila do SOC + coleta). A coluna **Etapa** diz onde cada veículo
+   está: Descarregando · Doca N / Em fila · aguardando doca / Sem chegada / Em trânsito p/ SOC / Em coleta.
+   Sem barra de filtros na Visão Geral; clique na linha abre o detalhe.
 
-O **Fluxo operacional** segue o Hoje / Ontem do Forecast: Handover conta as concluídas com handover naquele dia;
-em "Ontem" as etapas em andamento contam só os veículos coletados naquele dia.
+O **Fluxo operacional** segue o dia escolhido no Forecast: Handover = descargas finalizadas do Forecast daquele
+dia; em dias anteriores as etapas em andamento contam só os veículos coletados naquele dia.
 
 A aba **Concluídas** mantém a barra de filtros completa. As abas Fila/Pickup existem no código, mas ficam
 escondidas (o conteúdo está na Visão Geral).

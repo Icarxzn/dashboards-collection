@@ -290,31 +290,34 @@ function testarPayload() {
 }
 
 /**
- * Forecast (aba Forcast): uma linha por trip programada. O dia vem da coluna "Dia" (Hoje/Ontem);
- * sem ela, compara trip_ctime com a data de hoje/ontem.
+ * Forecast (aba Forcast): uma linha por trip programada, agrupada pelo trip_ctime de hoje ate D-7
+ * (a coluna "Dia" so e usada se trip_ctime vier vazio).
  * Pacotes vem da FMTrip pelo trip_id: previsto = pedidos, coletado = pacotes_coletados, descarregado = pacotes_recebidos.
  * Descarga finalizada = trip com handedover_time preenchido.
  */
 function buildForecast_(ss, tripRows, nowMs) {
   if (!ss.getSheetByName(DEFAULT_TAB_FORECAST)) return null;
   var tz = Session.getScriptTimeZone();
-  var hoje = Utilities.formatDate(new Date(nowMs), tz, 'yyyy-MM-dd');
-  var ontem = Utilities.formatDate(new Date(nowMs - 86400000), tz, 'yyyy-MM-dd');
+  var DIAS = 7;   // hoje + 7 dias para tras (D-7)
   var fc = readTable_(ss, DEFAULT_TAB_FORECAST, FORECAST_COLS).rows;
   var porTrip = {};
   tripRows.forEach(function (t) { var k = str_(t.trip_id); if (k) porTrip[k] = t; });
   var novo = function (dia) { return { dia: dia, veiculos: 0, finalizadas: 0, previsto: 0, coletado: 0, descarregado: 0, semTrip: 0, lista: [] }; };
-  var out = { hoje: novo(hoje), ontem: novo(ontem) };
+  var dias = [], porDia = {};
+  for (var i = 0; i <= DIAS; i++) {
+    var ds0 = Utilities.formatDate(new Date(nowMs - i * 86400000), tz, 'yyyy-MM-dd');
+    var o0 = novo(ds0); o0.offset = i; dias.push(o0); porDia[ds0] = o0;
+  }
   var vistos = {};
   fc.forEach(function (r) {
     var d = r.trip_ctime;
     var ds = Object.prototype.toString.call(d) === '[object Date]' ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : String(d).trim().slice(0, 10);
     var rot = str_(r.dia).toLowerCase();
-    var qual = rot === 'hoje' ? 'hoje' : rot === 'ontem' ? 'ontem' : ds === hoje ? 'hoje' : ds === ontem ? 'ontem' : null;
-    var id = str_(r.trip_id);
-    if (!qual || !id || vistos[id]) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) ds = rot === 'hoje' ? dias[0].dia : rot === 'ontem' ? dias[1].dia : '';
+    var id = str_(r.trip_id), o = porDia[ds];
+    if (!o || !id || vistos[id]) return;
     vistos[id] = true;
-    var o = out[qual], t = porTrip[id];
+    var t = porTrip[id];
     var ho = toIso_(r.handedover_time);
     o.veiculos++;
     if (ho) o.finalizadas++;
@@ -327,7 +330,7 @@ function buildForecast_(ss, tripRows, nowMs) {
       status: str_(r.portuguese_business_status), handover: ho, previsto: prev, coletado: col, descarregado: rec
     });
   });
-  return out;
+  return { dias: dias };
 }
 
 /* ======================= LEITURA DAS ABAS ======================= */

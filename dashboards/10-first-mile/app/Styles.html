@@ -663,6 +663,8 @@ table.dt tbody tr.grp .grp-d{margin-left:10px;text-transform:none;letter-spacing
 .fcsel{display:inline-flex;gap:2px;padding:3px;border-radius:99px;background:color-mix(in srgb,var(--text-2) 14%,transparent);margin-right:8px;vertical-align:middle}
 .fcsel button{border:0;background:transparent;color:var(--text-2);font:inherit;font-weight:700;font-size:12px;padding:4px 14px;border-radius:99px;cursor:pointer}
 .fcsel button.is-on{background:var(--accent);color:#fff}
+.fcsel button.is-empty:not(.is-on){opacity:.45}
+.fcsel{flex-wrap:wrap}
 
 /* Veículos First Mile: blocos Em fila / Em coleta */
 table.dt tbody tr.grp--main td{padding:16px 12px 10px;font-size:14px;border-bottom:1px solid var(--border-2);border-left:4px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
@@ -670,4 +672,19 @@ table.dt tbody tr.grp--coleta td{border-left-color:#60A5FA;background:color-mix(
 table.dt tbody tr.grp--coleta .grp-n{background:#3B82F6}
 table.dt tbody tr.grp--sub td{padding:10px 12px 6px 26px;font-size:11.5px}
 table.dt tbody tr.grp--sub .grp-n{background:color-mix(in srgb,var(--text-2) 30%,transparent);color:var(--text)}
+
+/* Veículos First Mile (versão limpa) */
+table.dt--fm td{vertical-align:middle}
+.fm-who{display:flex;flex-direction:column;gap:2px;line-height:1.2}
+.fm-who b{font-weight:600}
+.fm-who span{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;color:var(--text-2)}
+.fm-hrs{display:flex;flex-direction:column;gap:3px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.fm-hrs i{font-style:normal;font-family:Inter,system-ui,sans-serif;font-size:11px;color:var(--text-3);display:inline-block;width:58px;text-transform:uppercase;letter-spacing:.06em}
+.fm-et{display:inline-block;padding:5px 10px;border-radius:8px;font-size:13px;font-weight:600;background:color-mix(in srgb,var(--text-2) 14%,transparent);color:var(--text-2);white-space:nowrap}
+.fm-et--doca{background:color-mix(in srgb,#22C55E 16%,transparent);color:#22C55E}
+.fm-et--wait{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+table.dt--fm .prog{min-width:170px}
+.fm-et--trans{background:color-mix(in srgb,#60A5FA 18%,transparent);color:#60A5FA}
+.fm-et--col{background:color-mix(in srgb,#A78BFA 18%,transparent);color:#A78BFA}
+.fm-sub{display:block;margin-top:4px;font-size:11.5px;color:var(--text-3)}
 </style>

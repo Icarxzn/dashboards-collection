@@ -494,7 +494,7 @@ function buildGeral () {
       '<div class="panel panel__pad" id="gConc"></div></section>' +
     // Fila First Mile e Pickup direto na Visão Geral (mesmas tabelas, filtros e detalhe das abas)
     '<section class="section"><div class="section__head"><h2>Veículos First Mile</h2>' +
-      '<span class="hint">Em fila no SOC e em coleta (Pickup), na mesma tabela</span></div>' +
+      '<span class="hint" id="fmHint">Fila do SOC e coleta na mesma lista · a coluna Etapa mostra onde cada veículo está</span></div>' +
       '<div id="lReg-fm" data-reg="fm"></div></section>';
 }
 
@@ -596,41 +596,48 @@ function concChart () {
  * cuja coleta (Last Pickup) foi naquele dia — em "Hoje" entram todos que ainda estão em andamento. */
 function diaRange (qual) {
   var d = new Date(STATE.now); d.setHours(0, 0, 0, 0);
-  if (qual === 'ontem') d.setDate(d.getDate() - 1);
+  d.setDate(d.getDate() - (+qual || 0));   // qual = dias atrás (0 = hoje)
   var ini = d.getTime(); d.setDate(d.getDate() + 1);
   return { ini: ini, fim: d.getTime() };
 }
 function renderFlow () {
   var el = $('#gFlow'); if (!el) return;
-  var hoje = FC.dia !== 'ontem', R = diaRange(FC.dia);
+  var hoje = !FC.dia, R = diaRange(FC.dia);
   var noDia = function (ts) { return ts != null && ts >= R.ini && ts < R.fim; };
   var p = STATE.pickup, qA = rowsForKind('queue');
   if (!hoje) {
     p = p.filter(function (x) { return noDia(x.pk); });
     qA = qA.filter(function (x) { return noDia(t(x.last_pickup_time)) || noDia(x.soc); });
   }
-  var ho = rowsForKind('concluidas').filter(function (x) { return noDia(x.ho); }).length;
+  // Handover = descargas finalizadas do Forecast do dia (aba Forcast, handedover_time); sem Forecast, conta pela fila
+  var fd = STATE.raw && STATE.raw.forecast && STATE.raw.forecast.dias && STATE.raw.forecast.dias[FC.dia];
+  var ho = fd && fd.veiculos ? fd.finalizadas : rowsForKind('concluidas').filter(function (x) { return noDia(x.ho); }).length;
   el.innerHTML = flowStepper({
     pickup: p.length, coleta: p.length, deslocamento: p.length,
     soc: qA.filter(function (x) { return x.soc != null; }).length, fila: qA.length, handover: ho
   });
   var dt = new Date(R.ini);
-  $('#flowHint').textContent = (hoje ? 'Hoje' : 'Ontem') + ' (' + ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2) +
-    ') · handover no dia' + (hoje ? ' · em andamento agora' : ' · coletados no dia') + ' · muda com o Hoje / Ontem do Forecast';
+  $('#flowHint').textContent = (hoje ? 'Hoje' : FC.dia === 1 ? 'Ontem' : 'D-' + FC.dia) + ' (' + ('0' + dt.getDate()).slice(-2) + '/' + ('0' + (dt.getMonth() + 1)).slice(-2) +
+    ') · handover = descargas finalizadas do Forecast' + (hoje ? ' · em andamento agora' : ' · coletados no dia') + ' · muda com o dia escolhido no Forecast';
 }
 
 /* ---------- Forecast (aba Forcast + pacotes da FMTrip), com escolha Hoje / Ontem ---------- */
-var FC = { dia: 'hoje', lista: false };
+var FC = { dia: 0, lista: false };   // dia = quantos dias atrás (0 = hoje ... 7 = D-7)
 function forecastCards () {
   var raw = STATE.raw && STATE.raw.forecast;
-  if (!raw || !raw.hoje) { $('#gFcSec').hidden = true; return; }
+  if (!raw || !raw.dias || !raw.dias.length) { $('#gFcSec').hidden = true; return; }
   $('#gFcSec').hidden = false;
-  var f = raw[FC.dia] || raw.hoje, hoje = FC.dia === 'hoje';
+  if (!raw.dias[FC.dia]) FC.dia = 0;
+  var f = raw.dias[FC.dia], hoje = FC.dia === 0;
   var dd = f.dia.split('-');
-  $('#fcHint').innerHTML = '<span class="fcsel">' +
-    '<button data-fcdia="hoje" class="' + (hoje ? 'is-on' : '') + '">Hoje</button>' +
-    '<button data-fcdia="ontem" class="' + (!hoje ? 'is-on' : '') + '">Ontem</button></span>' +
+  $('#fcHint').innerHTML = '<span class="fcsel">' + raw.dias.map(function (d, i) {
+      var p = d.dia.split('-');
+      var nome = i === 0 ? 'Hoje' : i === 1 ? 'Ontem' : p[2] + '/' + p[1];
+      return '<button data-fcdia="' + i + '" class="' + (i === FC.dia ? 'is-on' : '') + (d.veiculos ? '' : ' is-empty') + '"' +
+        ' title="' + (i ? 'D-' + i + ' · ' : '') + d.veiculos + ' veículo(s)">' + nome + '</button>';
+    }).join('') + '</span>' +
     ' Trips da aba Forcast de ' + dd[2] + '/' + dd[1] + ' · pacotes da FMTrip';
+  var semDados = f.veiculos > 0 && f.semTrip === f.veiculos;   // trips do dia já saíram da FMTrip
   var real = f.coletado, falta = Math.max(0, f.previsto - real);
   var ader = f.previsto ? real / f.previsto * 100 : null;
   var nv = ader == null ? '' : ader >= 95 ? 'ok' : ader >= 80 ? 'warn' : 'crit';
@@ -639,7 +646,10 @@ function forecastCards () {
     return '<div class="fc ' + cls + '"' + (attrs || '') + '><div class="fc__l">' + label + '</div><div class="fc__v">' + value + '</div>' +
       (sub ? '<div class="fc__s">' + sub + '</div>' : '') + (extra || '') + '</div>';
   };
-  $('#gFc').innerHTML =
+  var semMsg = '<div class="slabar">Os pacotes de ' + dd[2] + '/' + dd[1] + ' não estão mais na FMTrip (a aba guarda só os dias mais recentes). ' +
+    'Os veículos e as descargas abaixo vêm da aba Forcast.</div>';
+  var parcial = !semDados && f.semTrip ? '<div class="fc__s" style="margin:-6px 0 12px">' + f.semTrip + ' trip(s) desse dia sem pacotes na FMTrip</div>' : '';
+  $('#gFc').innerHTML = (semDados ? semMsg :
     '<div class="fcgrid fcgrid--3">' +
       fc('', 'Forecast do dia', fmtNum(f.previsto), 'pacotes previstos') +
       fc('', 'Coletado / Descarregado', fmtNum(real),
@@ -647,12 +657,12 @@ function forecastCards () {
          ' · descarregado ' + fmtNum(f.descarregado)) +
       fc('fc--' + nv, 'Aderência ao forecast', ader == null ? '—' : ader.toFixed(2).replace('.', ',') + '%', '',
          '<div class="fcbar"><i style="width:' + Math.min(100, ader || 0) + '%"></i></div>') +
-    '</div><div class="fcgrid fcgrid--4">' +
+    '</div>' + parcial) + '<div class="fcgrid fcgrid--4">' +
       fc('', 'Veículos p/ descarga', fmtNum(f.veiculos), FC.lista ? 'clique para esconder a lista' : 'clique para ver os veículos', '', ' data-fclista="1" title="Ver os veículos"') +
       fc('fc--ok', 'Descarga finalizada', fmtNum(f.finalizadas)) +
       fc(pend ? 'fc--warn' : '', 'Pendentes', fmtNum(pend)) +
       (hoje ? fc('fc--dark', 'Em fila agora', fmtNum(rowsForKind('queue').length), '', '', ' data-goto="fila" title="Ver os veículos na fila"')
-            : fc('fc--dark', 'Coletado ontem', fmtNum(f.coletado), 'descarregado ' + fmtNum(f.descarregado))) +
+            : fc('fc--dark', 'Coletado ' + (FC.dia === 1 ? 'ontem' : 'em ' + dd[2] + '/' + dd[1]), semDados ? '—' : fmtNum(f.coletado), semDados ? 'sem dados na FMTrip' : 'descarregado ' + fmtNum(f.descarregado))) +
     '</div>' + (FC.lista ? fcLista(f.lista || []) : '');
 }
 
@@ -857,65 +867,60 @@ function renderFm () {
 }
 
 function fmTable (q, p) {
-  var N = 11, k = 'fm';
-  var ageCls = function (r) { return 'mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : ''); };
+  var N = 7, k = 'fm';
+  var ageCls = function (r) { return 'age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : ''); };
+  var docaCurta = function (d) { var m = String(d || '').match(/(\d+)/); return m ? 'Doca ' + m[1] : (d || 'Doca'); };
+  var quem = function (r) {
+    return '<div class="fm-who"><b>' + dash(r.driver_name) + '</b><span>' + (r.placa ? esc(r.placa) : 'sem placa') + '</span></div>';
+  };
+  var horas = function (a, la, b, lb) {
+    return '<div class="fm-hrs"><span><i>' + la + '</i>' + fmtClock(a) + '</span>' + (lb ? '<span><i>' + lb + '</i>' + (b ? fmtClock(b) : '—') + '</span>' : '') + '</div>';
+  };
   var linhaQ = function (r) {
+    var etapa = r.phase === 'doca' && r.doca ? '<span class="fm-et fm-et--doca">Descarregando · ' + esc(docaCurta(r.doca)) + '</span>'
+      : r.phase === 'doca' ? '<span class="fm-et fm-et--wait">Em fila · aguardando doca</span>'
+      : '<span class="fm-et">Sem chegada registrada</span>';
     return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="queue">' +
       '<td>' + badge(r.farol, 'queue') + '</td>' +
+      '<td>' + quem(r) + '</td>' +
       '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
-      '<td>' + dash(r.driver_name) + '</td>' +
-      '<td class="mono">' + dash(r.placa) + '</td>' +
-      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
-      '<td class="mono">' + fmtClock(r.soc_arrival_time) + '</td>' +
-      '<td>' + docaCell(r) + '</td>' +
-      '<td class="' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">' + agingCaption(r.phase, r.soc != null) + '</span></td>' +
-      '<td class="mono">' + fmtDur(r.totalDuration) + '</td>' +
+      '<td>' + etapa + '</td>' +
+      '<td>' + horas(r.last_pickup_time, 'Coleta', r.soc_arrival_time, 'SOC') + '</td>' +
+      '<td class="mono ' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">no SOC · total ' + fmtDur(r.totalDuration) + '</span></td>' +
       '<td>' + slaPill(r.slaState) + '</td>' +
-      '<td>' + badge(r.farol, 'queue') + '</td>' +
     '</tr>';
   };
+  var transito = function (r) { return r.paradas && (r.paradas_feitas || 0) >= r.paradas; };
   var linhaP = function (r) {
+    var et = transito(r) ? '<span class="fm-et fm-et--trans">Em trânsito p/ SOC</span>' : '<span class="fm-et fm-et--col">Em coleta</span>';
+    var det = r.paradas ? '<span class="fm-sub">' + (r.paradas_feitas || 0) + '/' + r.paradas + ' paradas' +
+      (r.pacotes_a_caminho ? ' · ' + fmtNum(r.pacotes_a_caminho) + ' a caminho' : '') + '</span>' : '';
     return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="pickup">' +
       '<td>' + badge(r.farol, 'pickup') + '</td>' +
+      '<td>' + quem(r) + '</td>' +
       '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
-      '<td>' + dash(r.driver_name) + '</td>' +
-      '<td class="mono">' + dash(r.placa) + '</td>' +
-      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
-      '<td class="mono dim">—</td>' +
-      '<td>' + progCell(r) + '</td>' +
-      '<td class="' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span><span class="agecap">desde pickup</span></td>' +
-      '<td class="mono dim">—</td>' +
+      '<td>' + et + det + '</td>' +
+      '<td>' + horas(r.last_pickup_time, 'Coleta') + '</td>' +
+      '<td class="mono ' + ageCls(r) + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span><span class="agecap">desde a coleta</span></td>' +
       '<td>' + slaPill(r.slaState) + '</td>' +
-      '<td>' + pickupSituacao(r) + '</td>' +
     '</tr>';
   };
   var cab = function (cls, t, n, d) {
     return '<tr class="grp grp--main ' + cls + '"><td colspan="' + N + '"><b>' + esc(t) + '</b><span class="grp-n">' + n + '</span>' +
       '<span class="grp-d">' + esc(d) + '</span></td></tr>';
   };
-  var sub = function (t, n, d) {
-    return '<tr class="grp grp--sub"><td colspan="' + N + '"><b>' + esc(t) + '</b><span class="grp-n">' + n + '</span>' +
-      (d ? '<span class="grp-d">' + esc(d) + '</span>' : '') + '</td></tr>';
+  // ordem da operação: descarregando, aguardando doca, sem chegada, em trânsito, em coleta
+  var ordem = function (x) {
+    var r = x.r;
+    if (x.k === 'q') return r.phase === 'doca' && r.doca ? 0 : r.phase === 'doca' ? 1 : 2;
+    return transito(r) ? 3 : 4;
   };
-  var body = '';
-  if (q.length) {
-    body += cab('grp--fila', 'Em fila', q.length, 'já no SOC, aguardando handover');
-    [
-      { t: 'Descarregando', d: 'já em doca', f: function (r) { return r.phase === 'doca' && r.doca; } },
-      { t: 'Aguardando doca', d: 'chegaram ao SOC e esperam doca', f: function (r) { return r.phase === 'doca' && !r.doca; } },
-      { t: 'Sem chegada registrada', d: 'ainda sem chegada casada no Recebimento', f: function (r) { return r.phase !== 'doca'; } }
-    ].forEach(function (g) {
-      var rs = q.filter(g.f);
-      if (rs.length) body += sub(g.t, rs.length, g.d) + rs.map(linhaQ).join('');
-    });
-  }
-  if (p.length) {
-    body += cab('grp--coleta', 'Em coleta', p.length, 'coletaram o First Mile e ainda não chegaram ao SOC') + p.map(linhaP).join('');
-  }
+  var todos = q.map(function (r, i) { return { r: r, k: 'q', i: i }; }).concat(p.map(function (r, i) { return { r: r, k: 'p', i: i }; }));
+  todos.sort(function (a, b) { return ordem(a) - ordem(b) || a.i - b.i; });
+  var body = todos.map(function (x) { return x.k === 'q' ? linhaQ(x.r) : linhaP(x.r); }).join('');
   return '<div class="tablewrap"><div class="tablescroll"><table class="dt dt--fm"><thead><tr>' +
-    th('Status', null, k) + th('Orders', 'orders', k, true) + th('Driver', null, k) + th('Placa', null, k) +
-    th('Last Pickup', 'pickup', k) + th('Chegada ao SOC', null, k) + th('Doca / Coleta', null, k) +
-    th('Aging', 'aging', k) + th('Tempo total', null, k) + th('SLA', null, k) + th('Situação', null, k) +
+    th('Status', null, k) + th('Motorista / placa', null, k) + th('Orders', 'orders', k, true) +
+    th('Etapa', null, k) + th('Horários', 'pickup', k) + th('Aging', 'aging', k) + th('SLA', null, k) +
     '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
 }
 
@@ -1379,7 +1384,7 @@ document.addEventListener('click', function (e) {
 
   // cards da Visão Geral
   var fcd = e.target.closest ? e.target.closest('[data-fcdia]') : null;
-  if (fcd) { FC.dia = fcd.getAttribute('data-fcdia'); forecastCards(); renderFlow(); return; }
+  if (fcd) { FC.dia = +fcd.getAttribute('data-fcdia') || 0; forecastCards(); renderFlow(); return; }
   var fcl = e.target.closest ? e.target.closest('[data-fclista]') : null;
   if (fcl) { FC.lista = !FC.lista; forecastCards(); return; }
   var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
