@@ -65,6 +65,10 @@ PROJETOS = [
      "sheet_id": "15zDTkfz-01gZgefZz9aukXbXnXM2WDbF3zA1iWPXGOE", "sheet_nome": "Produtividade PE2",
      "script_id": "1yOxXxJQbJX9VEdKsErbfz3VB1q4HFnKDts2iNqN9f0TEQRzjVgkBKxZ-",
      "deploy_id": "AKfycbxwkHQWKlW_egNvJtSnmAiAFgxO7FGppeSiTsB0_WdE2tFnbOeUioqq-lEySjvkm_Lg"},
+    {"dash": "10-first-mile", "unidade": "app", "nome": "First Mile · PE2",
+     "sheet_id": "1m7EKgvfEBdGiCW032sZKB6mf2QqIpYJfK-aDlo_E5zc", "sheet_nome": "[VIS] - FirstMille",
+     "script_id": "1o2s9fKcUH4v__wRWT0D35JdU8TTymFuW9h1GyGeRf0hRBxqYggvG2q1g",
+     "deploy_id": "AKfycbzOQnXVh5npm9CYyh8Rv6sFddA3KndsgTCDJFNiYnEOxe7Z5rqiHeu_NHjoXf_PYvsh"},
 ]
 
 # Planilhas usadas fora dos web apps

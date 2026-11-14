@@ -148,7 +148,9 @@ function lerJanela_(ss, tz) {
       if (v > 0) registros.push({ dia: c.dia, hora: c.hora, id: id, n: n, v: v });
     });
   });
-  return { stamp: stampTxt, diaAtual: diaOperacional_(agora), registros: registros };
+  // horas (dia operacional + hora) que estão na janela desta leitura: nelas a Consulta é a verdade
+  const horasJanela = cols.map(c => ({ dia: c.dia, hora: c.hora }));
+  return { stamp: stampTxt, diaAtual: diaOperacional_(agora), registros: registros, horasJanela: horasJanela };
 }
 
 /** Dia operacional (06:00 → 05:59) de um horário, em ISO yyyy-MM-dd. */
@@ -190,6 +192,13 @@ function atualizarHistorico_(ss, janela) {
       pos[l[0] + '|' + l[1]] = i;
     });
 
+    // Nas horas que estão na janela atual, o histórico fica IGUAL à Consulta: primeiro zera essas horas
+    // de todo mundo do dia (quem não aparece mais na base fica 0) e depois grava os valores lidos.
+    // Assim um dado errado que entrou na Consulta e foi corrigido some do histórico na leitura seguinte.
+    (janela.horasJanela || []).forEach(hj => {
+      linhas.forEach(l => { if (l[0] === hj.dia) l[3 + hj.hora] = 0; });
+    });
+
     janela.registros.forEach(r => {
       const k = r.dia + '|' + r.id;
       let i = pos[k];
@@ -204,7 +213,9 @@ function atualizarHistorico_(ss, janela) {
     // mantém só os últimos HIST_DIAS dias
     const corte = new Date(); corte.setDate(corte.getDate() - CONFIG.HIST_DIAS);
     const corteIso = diaOperacional_(corte);
-    const manter = linhas.filter(l => l[0] >= corteIso).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const temProducao = l => { for (let k = 3; k < 27; k++) if (Number(l[k]) > 0) return true; return false; };
+    const manter = linhas.filter(l => l[0] >= corteIso && temProducao(l))   // linha toda zerada sai do histórico
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 
     if (n > 0) sh.getRange(2, 1, n, LEDGER_CAB.length).clearContent();
     if (manter.length) {

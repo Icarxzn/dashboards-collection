@@ -1,0 +1,1324 @@
+<script>
+(function () {
+'use strict';
+
+/* ============================================================
+ * FIRST MILE — CONTROL TOWER  ·  client
+ * Aging e derivados sao calculados aqui (com serverNow) para
+ * atualizacao viva e filtros/ordenacao instantaneos, sem nova
+ * consulta ao backend a cada interacao.
+ * ========================================================== */
+
+var MS = { min: 60000, hour: 3600000 };
+var MAX_ROWS = 400;
+
+var STATE = {
+  tab: 'geral',
+  status: 'loading',        // loading | ok | error
+  error: null,
+  refreshing: false,
+  raw: null,                // payload cru do servidor
+  cfg: null,
+  now: Date.now(),
+  skew: 0,                  // serverNow - Date.now() no momento do load
+  lastSync: null,           // Date do ultimo payload ok
+  queue: [],                // linhas enriquecidas
+  pickup: [],
+  built: null,              // aba cuja estrutura ja esta no DOM
+  f: {
+    queue:      emptyFilters(),
+    pickup:     emptyFilters(),
+    concluidas: emptyFilters()
+  },
+  sort: { queue: 'aging_desc', pickup: 'aging_desc', concluidas: 'handover_desc' },
+  drawer: { open: false, tripId: null, kind: null }
+};
+
+function emptyFilters () {
+  return { q:'', status:'', agency:'', driver:'', placa:'', trip:'', agingMin:'', agingMax:'', ordersMin:'', ordersMax:'' };
+}
+
+/* ---------- atalhos DOM ---------- */
+function $ (s, r) { return (r || document).querySelector(s); }
+function $$ (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+function esc (v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function ci (v) { return String(v == null ? '' : v).toLowerCase(); }
+
+/* ---------- ICONES ---------- */
+var IC = {
+  truck:'<path d="M1 3h13v10H1z"/><path d="M14 7h4l3 3v3h-7V7z"/><circle cx="5.5" cy="16.5" r="2"/><circle cx="17.5" cy="16.5" r="2"/>',
+  box:'<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alert:'<path d="M12 2l10 18H2L12 2z"/><path d="M12 9v5"/><path d="M12 17h.01"/>',
+  gauge:'<path d="M12 14l4-4"/><path d="M20.5 15a9 9 0 10-17 0"/>',
+  layers:'<path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/>',
+  flag:'<path d="M4 22V4"/><path d="M4 4c4-2 8 2 12 0v9c-4 2-8-2-12 0"/>',
+  route:'<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M6 16.5V9a4 4 0 014-4h4a4 4 0 014 4v0"/>',
+  arrowR:'<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
+  arrowDown:'<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>',
+  x:'<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
+  factory:'<path d="M3 21V9l6 4V9l6 4V5l6 4v12z"/>',
+  car:'<path d="M5 13l1.5-5A2 2 0 018.4 6.5h7.2A2 2 0 0117.5 8L19 13"/><path d="M3 13h18v5H3z"/><circle cx="7.5" cy="18.5" r="1.6"/><circle cx="16.5" cy="18.5" r="1.6"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>'
+};
+function svg (path, cls) {
+  return '<svg class="' + (cls || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + path + '</svg>';
+}
+
+/* ---------- formatadores ---------- */
+function fmtNum (n) { return (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR'); }
+function dash (v) { v = (v == null ? '' : String(v)).trim(); return v === '' ? '—' : esc(v); }
+
+function fmtDur (ms) {
+  if (ms == null || isNaN(ms)) return '—';
+  if (ms < 0) ms = 0;
+  var m = Math.round(ms / MS.min);
+  var h = Math.floor(m / 60); m = m % 60;
+  return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+}
+function fmtDurLong (ms) {
+  if (ms == null || isNaN(ms)) return '—';
+  if (ms < 0) ms = 0;
+  var m = Math.round(ms / MS.min);
+  var h = Math.floor(m / 60); m = m % 60;
+  if (h === 0) return m + ' min';
+  return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
+}
+function fmtClock (iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: STATE.raw && STATE.raw.tz ? STATE.raw.tz : undefined }).format(d);
+  } catch (e) {
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+}
+function fmtDateTime (iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: STATE.raw && STATE.raw.tz ? STATE.raw.tz : undefined }).format(d);
+  } catch (e) { return fmtClock(iso); }
+}
+
+/* ---------- classificacao / farol ---------- */
+function classify (ms, okMax, attMax) {
+  if (ms == null || isNaN(ms)) return 'na';
+  var min = ms / MS.min;
+  if (min < okMax) return 'ok';
+  if (min < attMax) return 'warn';
+  return 'crit';
+}
+function farolLabel (f, kind) {
+  if (f === 'ok') return kind === 'pickup' ? 'Em rota' : 'OK';
+  if (f === 'warn') return 'Atenção';
+  if (f === 'crit') return 'Crítico';
+  return '—';
+}
+function badge (f, kind) {
+  var cls = f === 'ok' ? 'badge--ok' : f === 'warn' ? 'badge--warn' : f === 'crit' ? 'badge--crit' : 'badge--mut';
+  return '<span class="badge ' + cls + '"><span class="d"></span>' + esc(farolLabel(f, kind)) + '</span>';
+}
+
+/* ============================================================
+ * SERVIDOR
+ * ========================================================== */
+function loadData (manual) {
+  if (STATE.refreshing) return;
+  STATE.refreshing = true;
+  if (manual) setRefreshBusy(true);
+  if (STATE.status === 'loading') render();
+
+  google.script.run
+    .withSuccessHandler(function (payload) {
+      STATE.refreshing = false;
+      setRefreshBusy(false);
+      if (!payload || !payload.ok) {
+        STATE.status = 'error';
+        STATE.error = (payload && payload.error) || 'Resposta inválida do servidor.';
+        render(); updateSysPill();
+        if (manual) toast('Não foi possível atualizar os dados.', 'err');
+        return;
+      }
+      STATE.raw = payload;
+      STATE.cfg = payload.config;
+      STATE.skew = new Date(payload.serverNow).getTime() - Date.now();
+      STATE.now = Date.now() + STATE.skew;
+      STATE.lastSync = new Date();
+      STATE.status = 'ok';
+      STATE.error = null;
+      enrich();
+      STATE.built = null;
+      render();
+      updateSysPill();
+      if (manual) toast('Dados atualizados.', 'ok');
+    })
+    .withFailureHandler(function (err) {
+      STATE.refreshing = false;
+      setRefreshBusy(false);
+      STATE.status = 'error';
+      STATE.error = (err && err.message) || String(err);
+      render(); updateSysPill();
+      if (manual) toast('Falha na comunicação com o servidor.', 'err');
+    })
+    .getPayload();
+}
+
+function pushConfig (patch, btn) {
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  google.script.run
+    .withSuccessHandler(function (cfg) {
+      STATE.cfg = cfg;
+      if (STATE.raw) STATE.raw.config = cfg;
+      enrich();
+      STATE.built = null;
+      closeCfg();
+      render();
+      startTimers();
+      toast('Configuração salva.', 'ok');
+    })
+    .withFailureHandler(function (err) {
+      if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+      toast('Não foi possível salvar: ' + ((err && err.message) || err), 'err');
+    })
+    .saveConfig(patch);
+}
+
+function resetConfigRemote () {
+  google.script.run.withSuccessHandler(function (cfg) {
+    STATE.cfg = cfg;
+    if (STATE.raw) STATE.raw.config = cfg;
+    enrich(); STATE.built = null; closeCfg(); render(); startTimers();
+    toast('Configuração restaurada ao padrão.', 'ok');
+  }).resetConfig();
+}
+
+/* ============================================================
+ * ENRIQUECIMENTO (derivados)
+ * ========================================================== */
+function t (iso) { var d = iso ? new Date(iso).getTime() : NaN; return isNaN(d) ? null : d; }
+
+function enrich () {
+  if (!STATE.raw) { STATE.queue = []; STATE.pickup = []; return; }
+  var cfg = STATE.cfg || {};
+  var now = STATE.now;
+  var qb = (cfg.queue || {}), pb = (cfg.pickup || {});
+  var slaMs = (cfg.slaMinutes || 180) * MS.min;
+
+  STATE.queue = (STATE.raw.queue || []).map(function (r) {
+    var o = shallow(r);
+    o.pk = t(r.last_pickup_time);
+    o.ho = t(r.last_handover_time);
+    o.soc = t(r.soc_arrival_time);           // chegada real (aba Recebimento, casada por placa)
+    o.doca = r.doca_ocupada || '';
+
+    o.agingTotal    = o.pk  != null ? now - o.pk  : null;   // desde o Last Pickup
+    o.agingHandover = o.ho  != null ? now - o.ho  : null;   // desde o Last Handover
+    o.agingArrival  = o.soc != null ? now - o.soc : null;   // desde a Chegada ao SOC
+    // Transporte real Pickup → SOC (prefere a chegada; sem chegada casada, usa o Handover como proxy)
+    o.transport = (o.soc != null && o.pk != null) ? (o.soc - o.pk)
+      : (o.ho != null && o.pk != null) ? (o.ho - o.pk) : null;
+    // Tempo em doca: Chegada → Handover (fechado) ou Chegada → agora (ainda aguardando)
+    o.dockTime = (o.soc != null && o.ho != null) ? (o.ho - o.soc)
+      : (o.soc != null && o.ho == null) ? o.agingArrival : null;
+    // Duracao total: FECHADA (Last Pickup → Handover) uma vez feito o handover —
+    // nao pode continuar crescendo so porque o relogio "agora" avancou depois
+    // que a trip ja foi concluida. Enquanto ainda nao houve handover, e aberta
+    // (Last Pickup → agora), igual ao agingTotal.
+    o.totalDuration = (o.ho != null) ? (o.pk != null ? (o.ho - o.pk) : null) : o.agingTotal;
+
+    // Fase da Trip na fila — define de onde vem o aging principal (farol/ordenacao):
+    //  'doca'    -> chegou e ainda nao teve handover: conta desde a Chegada (max 2h = critico)
+    //  'pos'     -> ja teve handover: conta pela duracao FECHADA na doca (Chegada -> Handover).
+    //               Isso NAO cresce com o tempo — um handover de ontem que durou 30min na doca
+    //               continua "OK" hoje. Sem chegada casada nao da pra medir: fica "na" (cinza),
+    //               nunca "crítico" só por o handover ter acontecido há muito tempo.
+    //  'unknown' -> sem chegada casada e sem handover: fallback pelo Last Pickup
+    if (o.ho == null && o.soc != null) {
+      o.phase = 'doca';
+      o.ref = o.agingArrival;
+    } else if (o.ho != null) {
+      o.phase = 'pos';
+      o.ref = o.dockTime; // null quando a chegada nao foi casada
+    } else {
+      o.phase = 'unknown';
+      o.ref = o.agingTotal;
+    }
+    o.farol = classify(o.ref, qb.okMax || 60, qb.attentionMax || 120);
+    o.slaState = o.totalDuration == null ? 'na'
+      : o.totalDuration > slaMs ? 'over'
+      : o.totalDuration > slaMs * 0.8 ? 'near' : 'in';
+    o.agingMetric = o.ref;
+    return o;
+  });
+
+  STATE.pickup = (STATE.raw.pickup || []).map(function (r) {
+    var o = shallow(r);
+    o.pk = t(r.last_pickup_time);
+    o.ho = t(r.last_handover_time);
+    o.agingPickup = o.pk != null ? now - o.pk : null;
+    o.transport = (o.ho != null && o.pk != null) ? (o.ho - o.pk) : null;
+    o.farol = classify(o.agingPickup, pb.okMax || 60, pb.attentionMax || 120);
+    o.slaState = o.agingPickup == null ? 'na'
+      : o.agingPickup > slaMs ? 'over'
+      : o.agingPickup > slaMs * 0.8 ? 'near' : 'in';
+    o.agingMetric = o.agingPickup;
+    return o;
+  });
+}
+function shallow (o) { var n = {}; for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) n[k] = o[k]; return n; }
+
+/* ============================================================
+ * AGREGADOS
+ * ========================================================== */
+function sum (arr, f) { var s = 0; arr.forEach(function (x) { var v = f(x); if (v != null && !isNaN(v)) s += v; }); return s; }
+function mean (arr, f) {
+  var vs = []; arr.forEach(function (x) { var v = f(x); if (v != null && !isNaN(v)) vs.push(v); });
+  if (!vs.length) return null;
+  return vs.reduce(function (a, b) { return a + b; }, 0) / vs.length;
+}
+function maxBy (arr, f) {
+  var best = null, bv = -Infinity;
+  arr.forEach(function (x) { var v = f(x); if (v != null && !isNaN(v) && v > bv) { bv = v; best = x; } });
+  return best;
+}
+function minBy (arr, f) {
+  var best = null, bv = Infinity;
+  arr.forEach(function (x) { var v = f(x); if (v != null && !isNaN(v) && v < bv) { bv = v; best = x; } });
+  return best;
+}
+function countCrit (arr) { return arr.filter(function (x) { return x.farol === 'crit'; }).length; }
+function countWarnUp (arr) { return arr.filter(function (x) { return x.farol === 'warn' || x.farol === 'crit'; }).length; }
+
+function agg () {
+  var q = STATE.queue, p = STATE.pickup;
+  var qActive = rowsForKind('queue');       // ainda na fila, aguardando handover
+  var qDone   = rowsForKind('concluidas');  // ja tiveram handover — fora da fila
+  var slaMs = ((STATE.cfg && STATE.cfg.slaMinutes) || 180) * MS.min;
+
+  var ordersQ = sum(qActive, function (x) { return x.qtd_order; });
+  var ordersP = sum(p, function (x) { return x.qtd_order; });
+
+  var overQ = qActive.filter(function (x) { return x.slaState === 'over'; }).length;
+  var overP = p.filter(function (x) { return x.agingPickup != null && x.agingPickup > slaMs; }).length;
+
+  // "Maior aging" olha só pra quem ainda está esperando — uma trip concluída
+  // não está mais "aguardando" nada, mesmo que a duração fechada dela tenha
+  // sido grande.
+  var topQ = maxBy(qActive, function (x) { return x.totalDuration; });
+  var topP = maxBy(p, function (x) { return x.agingPickup; });
+  var topAgeVal = Math.max(topQ ? topQ.totalDuration : -1, topP ? topP.agingPickup : -1);
+  var topRow = null, topWhere = '';
+  if (topQ && (topQ.totalDuration >= (topP ? topP.agingPickup : -1))) { topRow = topQ; topWhere = 'Fila'; }
+  else if (topP) { topRow = topP; topWhere = 'Pickup'; }
+
+  var chegouSoc = qActive.filter(function (x) { return x.soc != null; }).length; // no SOC agora: chegou e ainda sem handover
+
+  return {
+    vFila: qActive.length,
+    ordersQ: ordersQ,
+    vPickup: p.length,
+    ordersP: ordersP,
+    vConcluidas: qDone.length,
+    overSla: overQ + overP, overQ: overQ, overP: overP,
+    topAge: topAgeVal >= 0 ? topAgeVal : null,
+    topRow: topRow, topWhere: topWhere,
+    flow: {
+      pickup: p.length, coleta: p.length, deslocamento: p.length,
+      soc: chegouSoc, fila: qActive.length, handover: qDone.length, processamento: null
+    },
+    filaResumo: {
+      veic: qActive.length, orders: ordersQ,
+      maiorAging: qActive.length ? (maxBy(qActive, function (x) { return x.ref; }) || {}).ref : null,
+      criticos: countCrit(qActive),
+      tempoMedio: mean(qActive, function (x) { return x.ref; })
+    },
+    pickupResumo: {
+      veic: p.length, orders: ordersP,
+      maisAntigo: (minBy(p, function (x) { return x.pk; }) || {}).pk || null,
+      acimaEsperado: countWarnUp(p)
+    },
+    bottleneck: computeBottleneck(qActive, p)
+  };
+}
+
+function computeBottleneck (q, p) {
+  var cfg = (STATE.cfg && STATE.cfg.bottleneck) || { pickupCriticalCount: 3, socCriticalCount: 3 };
+  var pickupCrit = countCrit(p);
+  var socCrit = countCrit(q);
+  // Transporte real: Last Pickup → Chegada ao SOC (cai para Handover se a chegada nao foi casada)
+  var avgTransport = mean(q, function (x) { return x.transport; });
+  // Tempo em doca: Chegada ao SOC → Handover (ou → agora, enquanto aguarda)
+  var avgDock = mean(q, function (x) { return x.dockTime; });
+
+  var kind, level, title, desc;
+  if (pickupCrit >= cfg.pickupCriticalCount && pickupCrit >= socCrit) {
+    kind = 'pickup'; level = 'crit'; title = 'Gargalo no Pickup';
+    desc = pickupCrit + ' veículo(s) com aging crítico ainda a caminho do SOC. O tempo está sendo perdido no transporte Pickup → SOC, antes da operação interna.';
+  } else if (socCrit >= cfg.socCriticalCount) {
+    kind = 'soc'; level = 'crit'; title = 'Gargalo no SOC';
+    desc = socCrit + ' veículo(s) já no SOC com aging crítico (doca ou pós-handover). O tempo está sendo perdido dentro da operação, não no transporte.';
+  } else if (pickupCrit > 0 || socCrit > 0) {
+    kind = 'mixed'; level = 'warn'; title = 'Atenção pontual';
+    desc = 'Sem concentração de críticos, mas há ' + (pickupCrit + socCrit) + ' veículo(s) fora do padrão. Acompanhar de perto Pickup e fila.';
+  } else {
+    kind = 'ok'; level = 'ok'; title = 'Fluxo normal';
+    desc = 'Pickups e fila dentro dos thresholds configurados. Nenhuma concentração de aging crítico.';
+  }
+  if (level !== 'ok' && avgTransport != null && avgDock != null) {
+    desc += ' Média transporte Pickup → SOC: ' + fmtDurLong(avgTransport) + ' · média em doca: ' + fmtDurLong(avgDock) + '.';
+  }
+  return { kind: kind, level: level, title: title, desc: desc, pickupCrit: pickupCrit, socCrit: socCrit, avgTransport: avgTransport, avgDock: avgDock };
+}
+
+/* ============================================================
+ * FILTRO + ORDENACAO
+ * ========================================================== */
+function applyFilters (rows, f, kind) {
+  var out = rows.filter(function (r) {
+    if (f.status && r.farol !== f.status) return false;
+    if (f.sla) {   // atalho do card "Acima do SLA" (mesma regra do card)
+      var slaMs = ((STATE.cfg && STATE.cfg.slaMinutes) || 180) * MS.min;
+      var acima = kind === 'pickup' ? (r.agingPickup != null && r.agingPickup > slaMs) : r.slaState === 'over';
+      if (!acima) return false;
+    }
+    if (f.agency && (r.agency_name || '') !== f.agency) return false;
+    if (f.driver && ci(r.driver_name).indexOf(ci(f.driver)) < 0) return false;
+    if (f.placa && ci(r.placa).indexOf(ci(f.placa)) < 0) return false;
+    if (f.trip && ci(r.trip_id).indexOf(ci(f.trip)) < 0) return false;
+
+    var ageMin = r.agingMetric == null ? null : r.agingMetric / MS.min;
+    if (f.agingMin !== '' && (ageMin == null || ageMin < Number(f.agingMin))) return false;
+    if (f.agingMax !== '' && (ageMin == null || ageMin > Number(f.agingMax))) return false;
+
+    if (f.ordersMin !== '' && (r.qtd_order == null || r.qtd_order < Number(f.ordersMin))) return false;
+    if (f.ordersMax !== '' && (r.qtd_order == null || r.qtd_order > Number(f.ordersMax))) return false;
+
+    if (f.q) {
+      var hay = ci([r.trip_id, r.agency_name, r.driver_name, r.placa, r.raw_status].join(' '));
+      if (hay.indexOf(ci(f.q)) < 0) return false;
+    }
+    return true;
+  });
+  return sortRows(out, STATE.sort[kind], kind);
+}
+
+function sortRows (rows, sortVal, kind) {
+  var m = (sortVal || 'aging_desc').split('_');
+  var key = m[0], dir = m[1] === 'asc' ? 1 : -1;
+  var getter;
+  if (key === 'orders') getter = function (r) { return r.qtd_order; };
+  else if (key === 'pickup') getter = function (r) { return r.pk; };
+  else if (key === 'handover') getter = function (r) { return r.ho; };
+  else getter = function (r) { return r.agingMetric; };
+
+  return rows.slice().sort(function (a, b) {
+    var va = getter(a), vb = getter(b);
+    var na = va == null || isNaN(va), nb = vb == null || isNaN(vb);
+    if (na && nb) return 0;
+    if (na) return 1;          // nulos sempre por ultimo
+    if (nb) return -1;
+    return (va - vb) * dir;
+  });
+}
+
+/* ============================================================
+ * RENDER — roteador
+ * ========================================================== */
+/**
+ * Linhas visiveis em cada aba. Uma vez concluida (fase 'pos' — ja teve
+ * Last Handover), a Trip sai da Fila First Mile e passa a aparecer só em
+ * "Concluídas" (mesmo array STATE.queue por baixo, só filtrado diferente).
+ */
+function rowsForKind (kind) {
+  if (kind === 'pickup') return STATE.pickup;
+  if (kind === 'concluidas') return STATE.queue.filter(function (x) { return x.phase === 'pos'; });
+  return STATE.queue.filter(function (x) { return x.phase !== 'pos'; }); // 'queue' = fila ativa (aguardando handover)
+}
+
+function render () {
+  var host = $('#view');
+  if (STATE.status === 'loading') { host.innerHTML = skeletonFor(STATE.tab); return; }
+  if (STATE.status === 'error') { host.innerHTML = errorState(); STATE.built = null; return; }
+
+  if (STATE.built !== STATE.tab) {
+    if (STATE.tab === 'geral') buildGeral();
+    else if (STATE.tab === 'fila') buildList('queue');
+    else if (STATE.tab === 'concluidas') buildList('concluidas');
+    else buildList('pickup');
+    STATE.built = STATE.tab;
+  }
+  if (STATE.tab === 'geral') fillGeral();
+  else if (STATE.tab === 'fila') fillList('queue');
+  else if (STATE.tab === 'concluidas') fillList('concluidas');
+  else fillList('pickup');
+
+  $('#cntFila').textContent = rowsForKind('queue').length;
+  $('#cntPickup').textContent = STATE.pickup.length;
+  $('#cntConcluidas').textContent = rowsForKind('concluidas').length;
+  if (STATE.drawer.open) refreshDrawer();
+}
+
+/* ---------------- VISAO GERAL ---------------- */
+function buildGeral () {
+  $('#view').innerHTML =
+    '<section class="section"><div class="section__head"><h2>Cards principais</h2>' +
+      '<span class="hint">Panorama de veículos, orders e exceções</span></div>' +
+      '<div class="kpigrid" id="gKpis"></div></section>' +
+    '<section class="section"><div class="section__head"><h2>Fluxo operacional</h2>' +
+      '<span class="hint">Onde o volume está concentrado agora</span></div>' +
+      '<div id="gFlow"></div></section>' +
+    '<section class="section"><div class="section__head"><h2>Onde está o gargalo?</h2>' +
+      '<span class="hint">Diagnóstico baseado nos dados atuais</span></div>' +
+      '<div id="gBott"></div></section>' +
+    '<section class="section"><div class="section__head"><h2>Concentração de veículos por horário</h2>' +
+      '<span class="hint" id="concHint"></span></div>' +
+      '<div class="panel panel__pad" id="gConc"></div></section>' +
+    // Fila First Mile e Pickup direto na Visão Geral (mesmas tabelas, filtros e detalhe das abas)
+    '<section class="section"><div class="section__head"><h2>Fila First Mile</h2>' +
+      '<span class="hint">Veículos já no SOC aguardando handover</span></div>' +
+      '<div id="lReg-queue" data-reg="queue"></div></section>' +
+    '<section class="section"><div class="section__head"><h2>Pickup</h2>' +
+      '<span class="hint">Coletaram o First Mile e ainda não chegaram ao SOC</span></div>' +
+      '<div id="lReg-pickup" data-reg="pickup"></div></section>';
+}
+
+function fillGeral () {
+  var a = agg();
+  var cfg = STATE.cfg || {};
+
+  $('#gKpis').innerHTML = [
+    kpi('accent', IC.truck,  'Veículos na fila', fmtNum(a.vFila), 'Na fila First Mile (no SOC)'),
+    kpi('',       IC.box,    'Orders na fila', fmtNum(a.ordersQ), a.vFila ? ('em ' + a.vFila + ' veículo(s)') : '—'),
+    kpi('accent', IC.car,    'Pickup em trânsito', fmtNum(a.vPickup), 'Coletaram · ainda não no SOC'),
+    kpi('',       IC.box,    'Orders em Pickup', fmtNum(a.ordersP), a.vPickup ? ('em ' + a.vPickup + ' veículo(s)') : '—'),
+    kpi(a.overSla > 0 ? 'crit' : 'ok', IC.alert, 'Acima do SLA', fmtNum(a.overSla),
+        'SLA ' + fmtDurLong((cfg.slaMinutes || 180) * MS.min) + ' · fila ' + a.overQ + ' / pickup ' + a.overP),
+    kpi(a.topAge != null && a.topAge > (cfg.slaMinutes || 180) * MS.min ? 'crit' : 'warn', IC.clock,
+        'Maior aging', fmtDur(a.topAge),
+        a.topRow ? (esc(a.topRow.trip_id || '—') + ' · ' + dash(a.topRow.placa) + ' · ' + esc(a.topWhere)) : '—', true)
+  ].join('');
+  // cards clicáveis: levam aos veículos daquele número
+  STATE.topTrip = a.topRow ? { trip: a.topRow.trip_id, kind: a.topWhere === 'Pickup' ? 'pickup' : 'queue' } : null;
+  var acoes = [['fila', 'Ver os veículos na fila'], ['fila', 'Ver os veículos na fila'], ['pickup', 'Ver os veículos em pickup'],
+               ['pickup', 'Ver os veículos em pickup'], ['sla', 'Ver só os veículos acima do SLA'], ['top', 'Abrir o veículo com maior aging']];
+  $$('#gKpis .kpi').forEach(function (el, i) {
+    if (!acoes[i]) return;
+    el.setAttribute('data-card', acoes[i][0]); el.setAttribute('title', acoes[i][1]);
+    el.setAttribute('role', 'button'); el.setAttribute('tabindex', '0');
+  });
+
+  $('#gFlow').innerHTML = flowStepper(a.flow);
+  $('#gBott').innerHTML = bottleneckCard(a.bottleneck);
+  $('#gConc').innerHTML = concChart();
+  renderRegion('queue');    // tabela da fila na Visão Geral
+  renderRegion('pickup');   // tabela do pickup na Visão Geral
+}
+
+/* ---------- Concentração de veículos por horário (chegada ao SOC) ----------
+ * Real: veículos que chegaram ao SOC no dia operacional (chegada da aba Recebimento; sem ela, o Handover).
+ * Previsto: veículos ainda em Pickup, pela chegada_prevista da FMTrip (parte clara da barra).
+ * Capacidade = pessoas no recebimento ÷ pessoas por veículo (veículos/hora).                         */
+// Faixas de veículos por hora: confortável até 'ok', no limite até 'limite', acima disso = acima da capacidade
+var CONC = { ok: 2, limite: 4 };
+function concChart () {
+  var cap = CONC.limite;
+  var COR = { ok: '#60A5FA', lim: '#FBBF24', over: '#F87171' };
+  var nivel = function (v) { return v > CONC.limite ? 'over' : v > CONC.ok ? 'lim' : 'ok'; };
+  $('#concHint').textContent = 'capacidade: até ' + CONC.limite + ' veículos por hora · chegada ao SOC no dia operacional';
+
+  var d = new Date(STATE.now); if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+  var ini = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 6, 0, 0).getTime();   // dia operacional 06:00
+  var real = new Array(24).fill(0), prev = new Array(24).fill(0), quem = [], k;
+  for (k = 0; k < 24; k++) quem.push({ r: [], p: [] });
+  var slot = function (ts) { if (ts == null || ts < ini || ts >= ini + 24 * MS.hour) return -1; return Math.floor((ts - ini) / MS.hour); };
+  STATE.queue.forEach(function (r) {
+    var i = slot(r.soc != null ? r.soc : r.ho);
+    if (i >= 0) { real[i]++; quem[i].r.push(r.placa || r.trip_id); }
+  });
+  STATE.pickup.forEach(function (r) {
+    var i = slot(t(r.chegada_prevista));
+    if (i >= 0) { prev[i]++; quem[i].p.push(r.placa || r.trip_id); }
+  });
+
+  var agora = slot(STATE.now), first = -1, last = -1;
+  for (k = 0; k < 24; k++) if (real[k] || prev[k]) { if (first < 0) first = k; last = k; }
+  if (first < 0) return '<div class="empty muted" style="padding:20px;text-align:center">Nenhuma chegada ao SOC no dia operacional ainda.</div>';
+  if (agora >= 0) { first = Math.min(first, agora); last = Math.max(last, agora); }
+
+  var hs = []; for (k = first; k <= last; k++) hs.push(k);
+  var W = 1000, H = 250, pl = 30, pr = 10, pt = 26, pb = 34;
+  var mx = Math.max(cap + 2, Math.max.apply(null, hs.map(function (i) { return real[i] + prev[i]; }))) * 1.12;
+  var slotW = (W - pl - pr) / hs.length, bw = Math.min(90, slotW * 0.72);
+  var y = function (v) { return pt + (H - pt - pb) * (1 - v / mx); };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block" role="img" aria-label="Veículos por hora de chegada ao SOC">';
+  var passo = mx > 14 ? 4 : 2;
+  for (var g = 0; g <= mx; g += passo) {
+    s += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y(g) + '" y2="' + y(g) + '" stroke="currentColor" stroke-opacity=".08"/>' +
+      '<text x="' + (pl - 6) + '" y="' + (y(g) + 4) + '" text-anchor="end" font-size="11" fill="currentColor" fill-opacity=".55">' + g + '</text>';
+  }
+  hs.forEach(function (i, j) {
+    var cx = pl + slotW * j + slotW / 2, x0 = cx - bw / 2, tot = real[i] + prev[i], cor = COR[nivel(tot)];
+    var lista = (quem[i].r.length ? 'Chegaram: ' + quem[i].r.join(', ') : '') + (quem[i].p.length ? (quem[i].r.length ? ' · ' : '') + 'Previstos: ' + quem[i].p.join(', ') : '');
+    var hh = ('0' + ((i + 6) % 24)).slice(-2) + ':00';
+    if (real[i]) s += '<rect x="' + x0 + '" y="' + y(real[i]) + '" width="' + bw + '" height="' + (y(0) - y(real[i])) + '" rx="6" fill="' + cor + '"><title>' + hh + ' · ' + tot + ' veículo(s) · ' + esc(lista) + '</title></rect>';
+    if (prev[i]) s += '<rect x="' + x0 + '" y="' + y(tot) + '" width="' + bw + '" height="' + (y(real[i]) - y(tot)) + '" rx="6" fill="' + cor + '" fill-opacity=".28" stroke="' + cor + '" stroke-dasharray="4 3"><title>' + hh + ' · ' + prev[i] + ' previsto(s) ainda em pickup · ' + esc(quem[i].p.join(', ')) + '</title></rect>';
+    if (tot) s += '<text x="' + cx + '" y="' + (y(tot) - 7) + '" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">' + tot + '</text>';
+    s += '<text x="' + cx + '" y="' + (H - 12) + '" text-anchor="middle" font-size="11" font-weight="' + (i === agora ? 700 : 500) + '" fill="' + (i === agora ? 'var(--accent)' : 'currentColor') + '" fill-opacity="' + (i === agora ? 1 : .6) + '">' + hh + '</text>';
+  });
+  s += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y(cap) + '" y2="' + y(cap) + '" stroke="currentColor" stroke-opacity=".55" stroke-dasharray="6 5"/>';
+  s += '</svg>';
+  var lg = function (c, txt, extra) { return '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:3px;background:' + c + ';' + (extra || '') + '"></i>' + txt + '</span>'; };
+  return s + '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:11.5px;color:var(--text-2)">' +
+    lg(COR.ok, 'Confortável ≤ ' + CONC.ok) + lg(COR.lim, 'No limite ' + (CONC.ok + 1) + '–' + CONC.limite) + lg(COR.over, 'Acima da capacidade ≥ ' + (CONC.limite + 1)) +
+    lg('transparent', 'Previsto (ainda em pickup)', 'border:1px dashed var(--text-2)') +
+    '<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:18px;border-top:2px dashed var(--text-2)"></i>Capacidade</span></div>';
+}
+
+function kpi (variant, icon, label, value, sub, small) {
+  return '<div class="kpi ' + (variant ? 'kpi--' + variant : '') + '">' +
+    '<div class="kpi__label">' + svg(icon) + esc(label) + '</div>' +
+    '<div class="kpi__value' + (small ? ' is-sm' : '') + '">' + value + '</div>' +
+    '<div class="kpi__sub">' + (sub || '') + '</div></div>';
+}
+
+function flowStepper (fl) {
+  var nodes = [
+    { n: 'Pickup', s: 'Coleta iniciada', v: fl.pickup },
+    { n: 'Coleta realizada', s: 'First Mile ok', v: fl.coleta },
+    { n: 'Em deslocamento', s: 'A caminho do SOC', v: fl.deslocamento },
+    { n: 'Chegou ao SOC', s: 'No SOC, sem handover', v: fl.soc },
+    { n: 'Fila First Mile', s: 'Aguardando handover', v: fl.fila },
+    { n: 'Handover', s: 'Entregue à operação', v: fl.handover }
+  ];
+  var peak = -1;
+  [fl.pickup, fl.soc, fl.fila, fl.handover].forEach(function (v) { if (v != null && v > peak) peak = v; });
+  var html = '<div class="flow">';
+  nodes.forEach(function (nd, i) {
+    if (i > 0) html += '<div class="flow__arrow">' + svg(IC.arrowR) + '</div>';
+    var isPeak = nd.v != null && nd.v === peak && peak > 0;
+    html += '<div class="flow__node' + (isPeak ? ' is-peak' : '') + '">' +
+      '<div class="flow__count">' + (nd.v == null ? '—' : nd.v) + '</div>' +
+      '<div class="flow__name">' + esc(nd.n) + '</div>' +
+      '<div class="flow__stage">' + esc(nd.s) + '</div></div>';
+  });
+  return html + '</div>';
+}
+
+function bottleneckCard (b) {
+  var ic = b.level === 'ok' ? IC.check : b.kind === 'pickup' ? IC.car : b.kind === 'soc' ? IC.factory : IC.alert;
+  return '<div class="bottleneck">' +
+    '<div class="bn__verdict is-' + b.level + '">' +
+      '<span class="bn__tag">' + svg(IC.gauge) + 'Diagnóstico</span>' +
+      '<div class="bn__title">' + svg(ic) + esc(b.title) + '</div>' +
+      '<p class="bn__desc">' + esc(b.desc) + '</p>' +
+    '</div>' +
+    '<div class="bn__metrics">' +
+      bnMetric('Aging médio · transporte', fmtDurLong(b.avgTransport), 'Last Pickup → Chegada ao SOC') +
+      bnMetric('Aging médio · doca', fmtDurLong(b.avgDock), 'Chegada ao SOC → Handover (ou agora, se aguardando)') +
+      bnMetric('Críticos no Pickup', String(b.pickupCrit), 'Aging crítico antes do SOC') +
+      bnMetric('Críticos no SOC', String(b.socCrit), 'Aging crítico na doca ou pós-handover (máx. 2h)') +
+    '</div></div>';
+}
+function bnMetric (l, v, s) {
+  return '<div class="bn__metric"><div class="l">' + esc(l) + '</div><div class="v">' + esc(v) + '</div><div class="s">' + esc(s) + '</div></div>';
+}
+
+function summaryFila (r) {
+  return '<div class="sumcard">' +
+    '<div class="sumcard__head"><h3>' + svg(IC.flag) + 'Fila First Mile</h3>' +
+      '<button class="btn btn--sm" data-goto="fila">Ver fila completa ' + svg(IC.arrowR) + '</button></div>' +
+    '<div class="sumgrid">' +
+      sumCell('Veículos na fila', fmtNum(r.veic)) +
+      sumCell('Orders', fmtNum(r.orders)) +
+      sumCell('Maior aging', fmtDur(r.maiorAging)) +
+      sumCell('Veículos críticos', String(r.criticos), r.criticos > 0) +
+      sumCell('Tempo médio', fmtDur(r.tempoMedio)) +
+      sumCell('', '') +
+    '</div></div>';
+}
+function summaryPickup (r) {
+  return '<div class="sumcard">' +
+    '<div class="sumcard__head"><h3>' + svg(IC.car) + 'Pickup</h3>' +
+      '<button class="btn btn--sm" data-goto="pickup">Ver Pickup ' + svg(IC.arrowR) + '</button></div>' +
+    '<div class="sumgrid">' +
+      sumCell('Pickups em trânsito', fmtNum(r.veic)) +
+      sumCell('Orders', fmtNum(r.orders)) +
+      sumCell('Pickup mais antigo', r.maisAntigo ? fmtClock(new Date(r.maisAntigo).toISOString()) : '—') +
+      sumCell('Acima do tempo esperado', String(r.acimaEsperado), r.acimaEsperado > 0) +
+    '</div></div>';
+}
+function sumCell (l, v, crit) {
+  if (l === '') return '<div class="cell" aria-hidden="true"></div>';
+  return '<div class="cell"><div class="l">' + esc(l) + '</div><div class="v' + (crit ? ' crit' : '') + '">' + v + '</div></div>';
+}
+
+/* ---------------- LISTAS (Fila / Pickup) ---------------- */
+var LIST_META = {
+  queue:      { title: 'Fila First Mile', hint: 'Veículos já no SOC aguardando handover', icon: IC.truck, table: 'queue' },
+  pickup:     { title: 'Pickup',           hint: 'Coletaram o First Mile e ainda não chegaram ao SOC', icon: IC.car, table: 'pickup' },
+  concluidas: { title: 'Concluídas',       hint: 'Trips que já tiveram o handover — saíram da fila', icon: IC.check, table: 'queue' }
+};
+
+function buildList (kind) {
+  var m = LIST_META[kind];
+  $('#view').innerHTML =
+    '<section class="section"><div class="section__head"><h2>' + esc(m.title) + '</h2>' +
+      '<span class="hint">' + esc(m.hint) + '</span></div>' +
+      '<div class="kpigrid" id="lKpis"></div></section>' +
+    '<section class="section">' + filterBar(kind) + '<div id="lReg"></div></section>';
+}
+
+function filterBar (kind) {
+  var f = STATE.f[kind];
+  var agencies = uniqueSorted(rowsForKind(kind).map(function (x) { return x.agency_name; }));
+  var opt = function (v, l, cur) { return '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(l) + '</option>'; };
+  return '<div class="filters" data-kind="' + kind + '">' +
+    '<div class="field field--search field--grow"><label>Busca</label>' +
+      '<input class="inp" type="text" data-f="q" placeholder="Trip, agência, motorista, placa…" value="' + esc(f.q) + '"></div>' +
+    '<div class="field field--sm"><label>Status</label><select class="sel" data-f="status">' +
+      opt('', 'Todos', f.status) + opt('ok', kind === 'pickup' ? 'Em rota' : 'OK', f.status) +
+      opt('warn', 'Atenção', f.status) + opt('crit', 'Crítico', f.status) +
+      (kind !== 'pickup' ? opt('na', 'Sem dado', f.status) : '') + '</select></div>' +
+    '<div class="field field--sm"><label>Agência</label><select class="sel" data-f="agency">' +
+      opt('', 'Todas', f.agency) + agencies.map(function (a) { return opt(a, a, f.agency); }).join('') + '</select></div>' +
+    '<div class="field field--sm"><label>Motorista</label><input class="inp" type="text" data-f="driver" value="' + esc(f.driver) + '"></div>' +
+    '<div class="field field--sm"><label>Placa</label><input class="inp mono" type="text" data-f="placa" value="' + esc(f.placa) + '"></div>' +
+    '<div class="field field--sm"><label>Trip ID</label><input class="inp mono" type="text" data-f="trip" value="' + esc(f.trip) + '"></div>' +
+    '<div class="field field--xs"><label>Aging ≥ min</label><input class="inp mono" type="number" min="0" data-f="agingMin" value="' + esc(f.agingMin) + '"></div>' +
+    '<div class="field field--xs"><label>Aging ≤ min</label><input class="inp mono" type="number" min="0" data-f="agingMax" value="' + esc(f.agingMax) + '"></div>' +
+    '<div class="field field--xs"><label>Orders ≥</label><input class="inp mono" type="number" min="0" data-f="ordersMin" value="' + esc(f.ordersMin) + '"></div>' +
+    '<div class="field field--xs"><label>Orders ≤</label><input class="inp mono" type="number" min="0" data-f="ordersMax" value="' + esc(f.ordersMax) + '"></div>' +
+    '<div class="field field--sm"><label>Ordenar</label><select class="sel" data-sort>' +
+      opt('aging_desc', 'Maior aging', STATE.sort[kind]) + opt('aging_asc', 'Menor aging', STATE.sort[kind]) +
+      opt('orders_desc', 'Mais orders', STATE.sort[kind]) + opt('orders_asc', 'Menos orders', STATE.sort[kind]) +
+      opt('pickup_desc', 'Last Pickup', STATE.sort[kind]) + opt('handover_desc', 'Last Handover', STATE.sort[kind]) + '</select></div>' +
+    '<div class="filters__meta"><span data-meta></span><button class="linklike" data-clear="' + kind + '">Limpar filtros</button></div>' +
+  '</div>';
+}
+
+function fillList (kind) {
+  var rows = rowsForKind(kind);
+  var cfg = STATE.cfg || {};
+  var m = LIST_META[kind];
+
+  var crit = countCrit(rows), warn = rows.filter(function (x) { return x.farol === 'warn'; }).length;
+  var tot = sum(rows, function (x) { return x.qtd_order; });
+  var media = mean(rows, function (x) { return x.agingMetric; });
+  var maior = (maxBy(rows, function (x) { return x.agingMetric; }) || {}).agingMetric;
+
+  var qtdLabel = kind === 'pickup' ? 'Pickups em trânsito' : kind === 'concluidas' ? 'Trips concluídas' : 'Veículos na fila';
+  var tempoSub = kind === 'pickup' ? 'desde o Last Pickup' : 'tempo em doca (fechado ou em curso)';
+
+  $('#lKpis').innerHTML = [
+    kpi('accent', m.icon, qtdLabel, fmtNum(rows.length), ''),
+    kpi('', IC.box, 'Orders', fmtNum(tot), ''),
+    kpi('', IC.clock, 'Tempo médio', fmtDur(media), tempoSub),
+    kpi(maior != null && maior > (cfg.slaMinutes || 180) * MS.min ? 'crit' : 'warn', IC.clock, 'Maior tempo', fmtDur(maior), ''),
+    kpi(warn > 0 ? 'warn' : 'ok', IC.alert, 'Atenção', String(warn), ''),
+    kpi(crit > 0 ? 'crit' : 'ok', IC.alert, 'Crítico', String(crit), '')
+  ].join('');
+
+  renderRegion(kind);
+}
+
+function renderRegion (kind) {
+  var reg = $('#lReg-' + kind) || $('#lReg'); if (!reg) return;   // Visão Geral tem uma área por tipo
+  var rows = rowsForKind(kind);
+  var filtered = applyFilters(rows, STATE.f[kind], kind);
+
+  var metaEl = $('.filters[data-kind="' + kind + '"] [data-meta]');
+  if (metaEl) metaEl.textContent = filtered.length + ' de ' + rows.length + ' veículo(s)';
+
+  if (!rows.length) { reg.innerHTML = emptyState('Nenhum veículo encontrado no momento.'); return; }
+  if (!filtered.length) {
+    reg.innerHTML = (STATE.f[kind] && STATE.f[kind].sla && reg.id !== 'lReg')
+      ? '<div class="slabar">Nenhum veículo acima do SLA aqui <button class="btn btn--sm" data-clear="' + kind + '">Mostrar todos</button></div>'
+      : emptyState('Nenhum veículo corresponde aos filtros.');
+    return;
+  }
+
+  var aviso = (STATE.f[kind] && STATE.f[kind].sla && reg.id !== 'lReg')   // Visão Geral (sem barra de filtros)
+    ? '<div class="slabar">Mostrando só os veículos acima do SLA · ' + filtered.length + ' de ' + rows.length +
+      ' <button class="btn btn--sm" data-clear="' + kind + '">Mostrar todos</button></div>' : '';
+  reg.innerHTML = aviso + (LIST_META[kind].table === 'queue' ? queueTable(filtered, kind) : pickupTable(filtered));
+}
+
+function th (label, sortKey, kind, right) {
+  var cur = STATE.sort[kind] || '';
+  var active = cur.indexOf(sortKey + '_') === 0;
+  var arrow = active ? (cur.indexOf('_asc') > 0 ? '▲' : '▼') : '';
+  return '<th class="' + (sortKey ? 'sortable ' : '') + (active ? 'is-sorted ' : '') + (right ? 'ta-r' : '') + '"' +
+    (sortKey ? ' data-th="' + sortKey + '"' : '') + '>' + esc(label) +
+    (sortKey ? ' <span class="arw">' + arrow + '</span>' : '') + '</th>';
+}
+
+function agingCaption (phase, hasArrival) {
+  if (phase === 'doca') return 'desde chegada';
+  if (phase === 'pos') return hasArrival ? 'tempo em doca' : 'sem chegada casada';
+  return 'desde pickup · sem chegada casada';
+}
+function docaCell (r) {
+  if (r.phase === 'doca' && r.doca) return '<span class="pill pill--dock">Descarregando · ' + esc(r.doca) + '</span>';
+  if (r.phase === 'doca') return '<span class="pill pill--near">Aguardando doca</span>';
+  return '<span class="pill pill--na">—</span>';
+}
+
+function queueTable (rows, sortKind) {
+  sortKind = sortKind || 'queue';
+  var cap = rows.length > MAX_ROWS;
+  var view = cap ? rows.slice(0, MAX_ROWS) : rows;
+  var body = view.map(function (r) {
+    return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="queue">' +
+      '<td>' + badge(r.farol, 'queue') + '</td>' +
+      '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
+      '<td>' + dash(r.driver_name) + '</td>' +
+      '<td class="mono">' + dash(r.placa) + '</td>' +
+      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
+      '<td class="mono">' + fmtClock(r.soc_arrival_time) + '</td>' +
+'<td>' + delayPill(r) + '</td>' +
+      '<td>' + docaCell(r) + '</td>' +
+      '<td class="mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : '') + '">' +
+        '<span class="agebig">' + fmtDur(r.ref) + '</span><span class="agecap">' + agingCaption(r.phase, r.soc != null) + '</span></td>' +
+      '<td class="mono">' + fmtClock(r.last_handover_time) + '</td>' +
+      '<td class="mono">' + fmtDur(r.totalDuration) + '</td>' +
+      '<td>' + slaPill(r.slaState) + '</td>' +
+      '<td>' + badge(r.farol, 'queue') + '</td>' +
+    '</tr>';
+  }).join('');
+  return '<div class="tablewrap"><div class="tablescroll"><table class="dt"><thead><tr>' +
+    th('Status', null, sortKind) + th('Orders', 'orders', sortKind, true) +
+    th('Driver', null, sortKind) + th('Placa', null, sortKind) +
+    th('Last Pickup', 'pickup', sortKind) + th('Chegada ao SOC', null, sortKind) + th('Vs previsto', null, sortKind) + th('Doca', null, sortKind) +
+    th('Aging', 'aging', sortKind) + th('Last Handover', 'handover', sortKind) + th('Tempo total', null, sortKind) +
+    th('SLA', null, sortKind) + th('Situação', null, sortKind) +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' + capNote(cap, rows.length) + '</div>';
+}
+
+function pickupTable (rows) {
+  var cap = rows.length > MAX_ROWS;
+  var view = cap ? rows.slice(0, MAX_ROWS) : rows;
+  var body = view.map(function (r) {
+    return '<tr class="is-' + r.farol + '" data-trip="' + esc(r.trip_id) + '" data-kind="pickup">' +
+      '<td>' + badge(r.farol, 'pickup') + '</td>' +
+      '<td class="ta-r"><span class="orders">' + fmtNum(r.qtd_order) + '</span></td>' +
+'<td>' + progCell(r) + '</td>' +
+      '<td>' + dash(r.driver_name) + '</td>' +
+      '<td class="mono">' + dash(r.placa) + '</td>' +
+      '<td class="mono">' + fmtClock(r.last_pickup_time) + '</td>' +
+      '<td class="mono age-' + (r.farol === 'crit' ? 'crit' : r.farol === 'warn' ? 'warn' : '') + '"><span class="agebig">' + fmtDur(r.agingPickup) + '</span></td>' +
+'<td>' + delayPill(r) + '</td>' +
+      '<td class="mono">' + fmtClock(r.last_handover_time) + '</td>' +
+      '<td>' + pickupSituacao(r) + '</td>' +
+    '</tr>';
+  }).join('');
+  return '<div class="tablewrap"><div class="tablescroll"><table class="dt"><thead><tr>' +
+    th('Status', null, 'pickup') + th('Orders', 'orders', 'pickup', true) + th('Coleta', null, 'pickup') +
+    th('Driver', null, 'pickup') + th('Placa', null, 'pickup') +
+    th('Last Pickup', 'pickup', 'pickup') + th('Desde Pickup', 'aging', 'pickup') + th('Vs previsto', null, 'pickup') +
+    th('Last Handover', 'handover', 'pickup') + th('Situação', null, 'pickup') +
+    '</tr></thead><tbody>' + body + '</tbody></table></div>' + capNote(cap, rows.length) + '</div>';
+}
+
+/* chegada real (ou agora, se ainda nao chegou) vs chegada_prevista da FMTrip */
+function delayPill (r) {
+  var prev = t(r.chegada_prevista);
+  if (prev == null) return '<span class="pill pill--na">—</span>';
+  var arr = t(r.soc_arrival_time);
+  var d = (arr != null ? arr : STATE.now) - prev;
+  if (d <= 0) return '<span class="pill pill--in">' + (arr != null ? 'No horário' : 'No prazo') + '</span>';
+  var cls = d <= 30 * MS.min ? 'pill--near' : 'pill--over';
+  return '<span class="pill ' + cls + '">+' + esc(fmtDurLong(d)) + '</span>';
+}
+/* paradas feitas / total da rota, com pacotes ainda a caminho */
+function progCell (r) {
+  var tot = r.paradas, done = r.paradas_feitas || 0;
+  if (!tot) return '<span class="dim">—</span>';
+  var pct = Math.max(0, Math.min(100, Math.round(100 * done / tot)));
+  return '<div class="prog"><div class="prog__bar"><span style="width:' + pct + '%"></span></div>' +
+    '<div class="prog__txt">' + done + '/' + tot + ' paradas' +
+    (r.pacotes_a_caminho ? ' · ' + fmtNum(r.pacotes_a_caminho) + ' a caminho' : '') + '</div></div>';
+}
+/* quadro "Status das docas FM" + "Aguardando em fila" (Visao Geral) */
+function docksBoard (docks, waiting) {
+  docks = docks || []; waiting = waiting || [];
+  var now = STATE.now;
+  var busy = docks.filter(function (d) { return d.busy; });
+  var who = function (x) {
+    return '<b>' + esc(x.driver || '—') + '</b>' + (x.placa ? ' <span class="dim mono">' + esc(x.placa) + '</span>' : '');
+  };
+  var rows = docks.map(function (d) {
+    return '<tr class="' + (d.busy ? 'is-busy' : 'is-free') + '">' +
+      '<td>' + esc(d.name) + '</td>' +
+      '<td>' + (d.busy ? '<span class="pill pill--dock">Descarregando</span> ' + who(d) : '<span class="pill pill--na">Vazia</span>') + '</td>' +
+      '<td class="ta-r mono">' + (d.busy ? fmtNum(d.orders) : '0') + '</td></tr>';
+  }).join('');
+  var total = sum(busy, function (d) { return d.orders; });
+  var wait = waiting.map(function (w, i) {
+    var ms = now - t(w.since);
+    var cls = ms < 30 * MS.min ? 'pill--in' : ms < 60 * MS.min ? 'pill--near' : 'pill--over';
+    return '<div class="wq"><span class="wq__n">' + (i + 1) + '</span><span class="wq__who">' + who(w) + '</span>' +
+      '<span class="pill ' + cls + '">' + esc(fmtDurLong(ms)) + '</span></div>';
+  }).join('');
+  return '<div class="docks">' +
+    '<div class="dk"><div class="dk__head"><span>Status das docas</span><span>Descarregando: <b>' + busy.length + '</b> · Vazias: <b>' + (docks.length - busy.length) + '</b></span></div>' +
+    '<table class="dk__tbl"><thead><tr><th>Doca</th><th>Motorista</th><th class="ta-r">Pacotes</th></tr></thead><tbody>' + rows +
+    '<tr class="dk__total"><td>Total em descarga</td><td></td><td class="ta-r mono">' + fmtNum(total) + '</td></tr></tbody></table></div>' +
+    '<div class="dk"><div class="dk__head"><span>Aguardando em fila</span><span><b>' + waiting.length + '</b> veículo(s)</span></div>' +
+    '<div class="wqlist">' + (wait || '<div class="dim wq__empty">Nenhum veículo First Mile aguardando.</div>') + '</div>' +
+    '<div class="wq__legend"><span class="wq__lbl">Tempo de espera</span><span class="lg lg--ok">até 30 min</span><span class="lg lg--warn">30 a 59 min</span><span class="lg lg--crit">1h ou mais</span></div></div>' +
+    '</div>';
+}
+function capNote (cap, total) {
+  return cap ? '<div style="padding:10px 14px;font-size:12px;color:var(--text-3);border-top:1px solid var(--border)">Exibindo ' + MAX_ROWS + ' de ' + total + ' — refine os filtros para ver o restante.</div>' : '';
+}
+function slaPill (s) {
+  if (s === 'over') return '<span class="pill pill--over">Estourado</span>';
+  if (s === 'near') return '<span class="pill pill--near">Atenção</span>';
+  if (s === 'in') return '<span class="pill pill--in">Dentro</span>';
+  return '<span class="pill pill--na">—</span>';
+}
+function pickupSituacao (r) {
+  if (r.agingPickup == null) return '<span class="pill pill--na">Sem Last Pickup</span>';
+  if (r.farol === 'crit') return '<span class="pill pill--over">Chegada atrasada</span>';
+  if (r.farol === 'warn') return '<span class="pill pill--near">Acompanhar</span>';
+  return '<span class="pill pill--in">Em rota</span>';
+}
+
+/* ============================================================
+ * DRAWER — detalhe da Trip
+ * ========================================================== */
+function openDrawer (tripId, kind) {
+  STATE.drawer = { open: true, tripId: tripId, kind: kind };
+  $('#drawerOverlay').classList.add('is-open');
+  $('#drawer').classList.add('is-open');
+  $('#drawer').setAttribute('aria-hidden', 'false');
+  refreshDrawer();
+}
+function closeDrawer () {
+  STATE.drawer.open = false;
+  $('#drawerOverlay').classList.remove('is-open');
+  $('#drawer').classList.remove('is-open');
+  $('#drawer').setAttribute('aria-hidden', 'true');
+}
+function findRow (tripId, kind) {
+  var arr = kind === 'pickup' ? STATE.pickup : STATE.queue;
+  var hit = arr.filter(function (x) { return String(x.trip_id) === String(tripId); })[0];
+  if (hit) return { row: hit, kind: kind };
+  var other = kind === 'pickup' ? STATE.queue : STATE.pickup;
+  hit = other.filter(function (x) { return String(x.trip_id) === String(tripId); })[0];
+  return hit ? { row: hit, kind: kind === 'pickup' ? 'queue' : 'pickup' } : null;
+}
+function refreshDrawer () {
+  var d = STATE.drawer; if (!d.open) return;
+  var found = findRow(d.tripId, d.kind);
+  var host = $('#drawer');
+  if (!found) { host.innerHTML = drawerShell('<div class="state"><h3>Trip não encontrada</h3><p>Pode ter mudado de etapa. Atualize os dados.</p></div>'); wireDrawerClose(); return; }
+  var r = found.row, kind = found.kind;
+
+  var etapaLabel = kind === 'pickup' ? 'Pickup (a caminho do SOC)'
+    : r.phase === 'doca' ? 'Fila First Mile — aguardando handover (na doca)'
+    : r.phase === 'pos' ? ('Fila First Mile — concluído' + (r.soc == null ? ' (chegada não casada)' : ''))
+    : 'Fila First Mile (chegada não casada)';
+
+  var matchNote = (kind === 'queue' && r.soc != null && r.arrival_match_method === 'driver')
+    ? ' <span class="dim">(casado por motorista — sem placa)</span>' : '';
+
+  var statusAtual = r.phase === 'pos'
+    ? (r.ref != null ? 'Concluído · ' + fmtDur(r.ref) + ' na doca' : 'Concluído · duração na doca indisponível')
+    : farolLabel(r.farol, kind) + (r.agingMetric != null ? ' · ' + fmtDur(r.agingMetric) : '');
+
+  var info = '<div class="dl">' +
+    dlItem('Trip ID', dash(r.trip_id), true) +
+    dlItem('Etapa', etapaLabel) +
+    dlItem('Agency', dash(r.agency_name)) +
+    dlItem('Driver', dash(r.driver_name)) +
+    dlItem('Placa', dash(r.placa), true) +
+    dlItem('Qtd Orders', fmtNum(r.qtd_order), true) +
+    (kind === 'queue' ? dlItem('Doca', (r.phase === 'doca' ? (r.doca ? esc(r.doca) : 'não identificada') : '—') + matchNote, true) : '') +
+    dlItem('Status atual', statusAtual, false, true) +
+  '</div>';
+
+  var transport = r.transport;
+  var body =
+    '<div class="dl" style="margin-bottom:2px">' +
+      dlItem('Tempo Pickup → SOC', transport != null ? fmtDurLong(transport) : 'sem dados suficientes', true, true) +
+    '</div>' +
+    '<p class="cfg-hint" style="margin:8px 0 0">Última coleta até a Chegada ao SOC (FMTrip). Ajuda a separar problema de <b>transporte</b> (Pickup → SOC) de problema de <b>operação SOC</b> (doca → Handover).</p>' +
+    info + timeline(r, kind);
+
+  host.innerHTML = drawerShell(body, r.trip_id);
+  wireDrawerClose();
+}
+function drawerShell (inner, tripId) {
+  return '<div class="drawer__head"><div><div class="k">Detalhe da Trip</div>' +
+    '<div class="t">' + (tripId ? esc(tripId) : '—') + '</div></div>' +
+    '<button class="btn btn--icon btn--ghost" data-drawer-close aria-label="Fechar">' + svg(IC.x) + '</button></div>' +
+    '<div class="drawer__body">' + inner + '</div>';
+}
+function dlItem (l, v, mono, full) {
+  return '<div class="' + (full ? 'full' : '') + '"><div class="l">' + esc(l) + '</div><div class="v' + (mono ? ' mono' : '') + '">' + v + '</div></div>';
+}
+function timeline (r, kind) {
+  var now = STATE.now;
+  var arriveMs = r.soc != null ? r.soc : (kind === 'queue' && r.ho != null ? r.ho : null);
+  var items = [];
+
+  items.push({ k: 'Last Pickup', time: fmtDateTime(r.last_pickup_time), delta: r.pk != null ? ('há ' + fmtDurLong(now - r.pk)) : '', st: r.pk != null ? 'done' : '' });
+
+  var deslocDelta = (r.pk != null && arriveMs != null) ? fmtDurLong(arriveMs - r.pk)
+    : (r.pk != null && kind === 'pickup') ? (fmtDurLong(now - r.pk) + ' (em andamento)') : '—';
+  items.push({ k: 'Deslocamento', time: deslocDelta, delta: 'Pickup → SOC', st: arriveMs != null ? 'done' : (kind === 'pickup' ? 'now' : '') });
+
+  items.push({ k: 'Chegada ao SOC', time: r.soc != null ? fmtDateTime(r.soc) : (kind === 'queue' ? 'sem chegada registrada' : '—'),
+               delta: r.soc != null && r.phase === 'doca' ? ('na doca ' + (r.doca || '—') + ' · há ' + fmtDurLong(now - r.soc)) : '',
+               st: r.soc != null ? 'done' : '' });
+
+  items.push({ k: 'Last Handover', time: fmtDateTime(r.last_handover_time),
+               delta: (r.ho != null && arriveMs != null && arriveMs !== r.ho) ? ('doca → Handover: ' + fmtDurLong(r.ho - arriveMs)) : '',
+               st: r.ho != null ? 'done' : '' });
+
+  var statusTime = (kind === 'queue' && r.phase === 'pos') ? 'Concluído' : farolLabel(r.farol, kind);
+  var statusDelta = (kind === 'queue' && r.phase === 'pos')
+    ? (r.ref != null ? (fmtDur(r.ref) + ' na doca') : 'duração na doca indisponível (sem chegada casada)')
+    : (r.agingMetric != null ? ('aging ' + fmtDur(r.agingMetric)) : '');
+  items.push({ k: 'Status atual', time: statusTime, delta: statusDelta, st: 'now' });
+
+  return '<div class="tl">' + items.map(function (it) {
+    return '<div class="tl__item ' + it.st + '"><span class="tl__dot"></span>' +
+      '<div class="tl__k">' + esc(it.k) + '</div>' +
+      '<div class="tl__time">' + esc(it.time) + '</div>' +
+      (it.delta ? '<div class="tl__delta">' + esc(it.delta) + '</div>' : '') + '</div>';
+  }).join('') + '</div>';
+}
+function wireDrawerClose () {
+  var b = $('#drawer [data-drawer-close]');
+  if (b) b.addEventListener('click', closeDrawer);
+}
+
+/* ============================================================
+ * CONFIG MODAL
+ * ========================================================== */
+function openCfg () {
+  var c = STATE.cfg || {};
+  var meta = STATE.raw && STATE.raw.meta ? STATE.raw.meta : {};
+  var num = function (key, label, val, hint, wide) {
+    return '<div class="cfg-row' + (wide ? ' cfg-row--wide' : '') + '"><label>' + esc(label) +
+      (hint ? '<div class="cfg-hint">' + esc(hint) + '</div>' : '') + '</label>' +
+      '<input class="inp mono" type="number" min="1" data-cfg="' + key + '" value="' + esc(val) + '"></div>';
+  };
+  var mapRows = function (fm, tab) {
+    if (!fm) return '';
+    var lines = Object.keys(fm).map(function (k) {
+      var v = fm[k];
+      return '<div>' + (v ? '<span class="ok">●</span> ' : '<span class="miss">○</span> ') + k + ' → ' + (v ? esc(v) : '<span class="miss">não encontrado</span>') + '</div>';
+    }).join('');
+    return '<div class="gl">Colunas detectadas · ' + esc(tab) + '</div><div class="cfg-map">' + lines + '</div>';
+  };
+
+  $('#cfgModal').innerHTML =
+    '<div class="modal"><div class="modal__head"><h3>Configurações</h3>' +
+      '<button class="btn btn--icon btn--ghost" data-cfg-close aria-label="Fechar">' + svg(IC.x) + '</button></div>' +
+    '<div class="modal__body">' +
+      '<div class="cfg-group"><div class="gl">Farol da Fila (minutos)</div>' +
+        num('queue.okMax', 'OK abaixo de', (c.queue || {}).okMax, 'Verde') +
+        num('queue.attentionMax', 'Atenção abaixo de', (c.queue || {}).attentionMax, 'Amarelo até aqui; acima = vermelho') +
+        '<div class="cfg-hint">Aplicado à duração relevante de cada fase: tempo na doca aguardando handover, ou (após o handover) o tempo fechado Chegada→Handover — nunca "há quanto tempo o handover aconteceu".</div>' +
+      '</div>' +
+      '<div class="cfg-group"><div class="gl">Farol do Pickup (minutos)</div>' +
+        num('pickup.okMax', 'Normal abaixo de', (c.pickup || {}).okMax) +
+        num('pickup.attentionMax', 'Atenção abaixo de', (c.pickup || {}).attentionMax) +
+      '</div>' +
+      '<div class="cfg-group"><div class="gl">SLA e diagnóstico</div>' +
+        num('slaMinutes', 'SLA total (min)', c.slaMinutes, 'Agora − Last Pickup') +
+        num('bottleneck.pickupCriticalCount', 'Gargalo: nº críticos no Pickup', (c.bottleneck || {}).pickupCriticalCount) +
+        num('bottleneck.socCriticalCount', 'Gargalo: nº críticos no SOC', (c.bottleneck || {}).socCriticalCount) +
+        num('autoRefreshSeconds', 'Auto-atualização (s)', c.autoRefreshSeconds, '15 a 900') +
+        num('arrivalMatchWindowHours', 'Janela de coerência da chegada (h)', c.arrivalMatchWindowHours, 'Horas após a chegada ao SOC para casar a trip com a fila (driver_id)') +
+        '<div class="cfg-row cfg-row--wide"><label>Consolidação de orders (mesma Trip)</label>' +
+          '<select class="sel" data-cfg="consolidateOrders">' +
+            '<option value="sum"' + (c.consolidateOrders === 'sum' ? ' selected' : '') + '>Somar</option>' +
+            '<option value="max"' + (c.consolidateOrders === 'max' ? ' selected' : '') + '>Maior valor</option>' +
+            '<option value="first"' + (c.consolidateOrders === 'first' ? ' selected' : '') + '>Primeira linha</option>' +
+          '</select></div>' +
+      '</div>' +
+      '<div class="cfg-group"><div class="gl">Fonte de dados ([VIS] - FirstMille)</div>' +
+      '<div class="cfg-row cfg-row--wide"><label>ID da planilha</label><input class="inp mono" type="text" data-cfg="spreadsheetId" value="' + esc(c.spreadsheetId || '') + '"></div>' +
+      '<div class="cfg-row cfg-row--wide"><label>Aba das trips</label><input class="inp" type="text" data-cfg="tabTrips" value="' + esc(c.tabTrips || '') + '"></div>' +
+      '<div class="cfg-row cfg-row--wide"><label>Aba da fila do SOC</label><input class="inp" type="text" data-cfg="tabQueue" value="' + esc(c.tabQueue || '') + '"></div>' +
+      num('pickupMaxAgeHours', 'Pickup some após (h)', c.pickupMaxAgeHours, 'Trip coletada e sem chegada há mais que isso deixa de aparecer no Pickup') +
+      '<div class="cfg-hint">Placa, agência e doca vêm da fila do SOC (só chegadas First Mile, arrival_type 7), casadas com a trip pelo <b>driver_id</b>.</div>' +
+      '</div>' +
+      mapRows(meta.queueFieldMap, meta.queueTab || 'Fila') +
+      mapRows(meta.pickupFieldMap, meta.pickupTab || 'Pickup') +
+      (meta.recebimento && meta.recebimento.ok ? mapRows(meta.recebimento.fieldMap, meta.recebimento.tab || 'Recebimento') : '') +
+    '</div>' +
+    '<div class="modal__foot"><button class="linklike" data-cfg-reset>Restaurar padrões</button>' +
+      '<div style="display:flex;gap:10px"><button class="btn" data-cfg-close>Cancelar</button>' +
+      '<button class="btn btn--primary" data-cfg-save>Salvar</button></div></div></div>';
+
+  $('#cfgModal').classList.add('is-open');
+  $('#cfgModal [data-cfg-close]').addEventListener('click', closeCfg);
+  $$('#cfgModal [data-cfg-close]').forEach(function (b) { b.addEventListener('click', closeCfg); });
+  $('#cfgModal [data-cfg-reset]').addEventListener('click', function () { if (confirm('Restaurar todos os thresholds ao padrão?')) resetConfigRemote(); });
+  $('#cfgModal [data-cfg-save]').addEventListener('click', function () { saveCfgFromForm(this); });
+}
+function closeCfg () { $('#cfgModal').classList.remove('is-open'); $('#cfgModal').innerHTML = ''; }
+
+function saveCfgFromForm (btn) {
+  var patch = { queue: {}, pickup: {}, bottleneck: {} };
+  $$('#cfgModal [data-cfg]').forEach(function (inp) {
+    var path = inp.getAttribute('data-cfg');
+    var val = inp.type === 'number' ? Number(inp.value) : inp.value;
+    var seg = path.split('.');
+    if (seg.length === 2) patch[seg[0]][seg[1]] = val;
+    else patch[seg[0]] = val;
+  });
+  pushConfig(patch, btn);
+}
+
+/* ============================================================
+ * ESTADOS
+ * ========================================================== */
+function skeletonFor (tab) {
+  var kpis = '';
+  for (var i = 0; i < 6; i++) kpis += '<div class="skel skel-kpi"></div>';
+  var rows = '';
+  for (var j = 0; j < 8; j++) rows += '<div class="skel skel-row"></div>';
+  return '<section class="section"><div class="section__head"><h2>Carregando</h2></div>' +
+    '<div class="kpigrid">' + kpis + '</div></section>' +
+    '<section class="section"><div class="skel skel-block"></div></section>' +
+    (tab === 'geral' ? '' : '<section class="section"><div class="tablewrap" style="padding:16px">' + rows + '</div></section>');
+}
+function emptyState (msg) {
+  return '<div class="tablewrap"><div class="state">' + svg(IC.box) +
+    '<h3>' + esc(msg) + '</h3><p>Assim que houver veículos na fonte de dados eles aparecerão aqui.</p></div></div>';
+}
+function errorState () {
+  return '<div class="tablewrap"><div class="state state--error">' + svg(IC.alert) +
+    '<h3>Não foi possível atualizar os dados. Tente novamente.</h3>' +
+    '<p>' + esc(STATE.error || '') + '</p>' +
+    '<button class="btn btn--primary" id="retryBtn">' + svg(IC.gauge) + ' Tentar novamente</button></div></div>';
+}
+
+/* ============================================================
+ * SYS PILL / TOAST / REFRESH BUSY
+ * ========================================================== */
+function updateSysPill () {
+  var pill = $('#sysPill');
+  pill.classList.remove('is-stale', 'is-error');
+  if (STATE.status === 'error') { pill.classList.add('is-error'); return; }
+  if (!STATE.lastSync) return;
+  var interval = ((STATE.cfg && STATE.cfg.autoRefreshSeconds) || 60) * 1000;
+  if (Date.now() - STATE.lastSync.getTime() > interval * 2.5) pill.classList.add('is-stale');
+}
+function setRefreshBusy (busy) {
+  var b = $('#refreshBtn');
+  b.classList.toggle('is-busy', busy);
+  b.disabled = busy;
+  var ic = $('.spin-target', b);
+  if (ic) ic.classList.toggle('spin', busy);
+}
+function toast (msg, kind) {
+  var host = $('#toasts');
+  var el = document.createElement('div');
+  el.className = 'toast' + (kind === 'err' ? ' toast--err' : kind === 'ok' ? ' toast--ok' : '');
+  el.textContent = msg;
+  host.appendChild(el);
+  setTimeout(function () { el.style.opacity = '0'; setTimeout(function () { el.remove(); }, 250); }, 2800);
+}
+
+/* ============================================================
+ * UTIL
+ * ========================================================== */
+function uniqueSorted (arr) {
+  var seen = {}, out = [];
+  arr.forEach(function (v) { v = (v == null ? '' : String(v)).trim(); if (v && !seen[v]) { seen[v] = 1; out.push(v); } });
+  return out.sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+}
+
+/* ============================================================
+ * EVENTOS
+ * ========================================================== */
+function switchTab (tab) {
+  if (STATE.tab === tab) return;
+  STATE.tab = tab;
+  $$('#tabs .tab').forEach(function (b) { b.classList.toggle('is-active', b.getAttribute('data-tab') === tab); });
+  STATE.built = null;
+  render();
+}
+
+function kindForTab (tab) {
+  tab = tab || STATE.tab;
+  if (tab === 'pickup') return 'pickup';
+  if (tab === 'concluidas') return 'concluidas';
+  return 'queue';
+}
+
+/* ---------- cards clicáveis da Visão Geral ---------- */
+function irParaTabela (kind) {
+  var reg = $('#lReg-' + kind);
+  var sec = reg && reg.closest('.section');
+  if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function acaoCard (acao) {
+  if (acao === 'fila') { irParaTabela('queue'); return; }
+  if (acao === 'pickup') { irParaTabela('pickup'); return; }
+  if (acao === 'top') { if (STATE.topTrip) openDrawer(STATE.topTrip.trip, STATE.topTrip.kind); return; }
+  if (acao === 'sla') {
+    // filtra as duas tabelas só com quem está acima do SLA ("Limpar filtros" volta ao normal)
+    STATE.f.queue = emptyFilters(); STATE.f.queue.sla = '1';
+    STATE.f.pickup = emptyFilters(); STATE.f.pickup.sla = '1';
+    STATE.built = null; render();
+    irParaTabela('queue');
+    toast('Mostrando só os veículos acima do SLA · use "Limpar filtros" para voltar');
+  }
+}
+
+document.addEventListener('keydown', function (e) {
+  var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
+  if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); acaoCard(card.getAttribute('data-card')); }
+});
+
+document.addEventListener('click', function (e) {
+  var tabBtn = e.target.closest ? e.target.closest('.tab') : null;
+  if (tabBtn) { switchTab(tabBtn.getAttribute('data-tab')); return; }
+
+  // cards da Visão Geral
+  var card = e.target.closest ? e.target.closest('#gKpis [data-card]') : null;
+  if (card) { acaoCard(card.getAttribute('data-card')); return; }
+
+  var goto = e.target.closest ? e.target.closest('[data-goto]') : null;
+  if (goto) {
+    var alvo = goto.getAttribute('data-goto');
+    // Fila e Pickup agora ficam na Visão Geral: desce até a tabela em vez de trocar de aba
+    if ((alvo === 'fila' || alvo === 'pickup') && STATE.tab === 'geral') { irParaTabela(alvo === 'fila' ? 'queue' : 'pickup'); return; }
+    switchTab(alvo); return;
+  }
+
+  var row = e.target.closest ? e.target.closest('tr[data-trip]') : null;
+  if (row) { openDrawer(row.getAttribute('data-trip'), row.getAttribute('data-kind')); return; }
+
+  var thEl = e.target.closest ? e.target.closest('th[data-th]') : null;
+  if (thEl) {
+    var regEl = thEl.closest('[data-reg]');   // na Visão Geral há duas tabelas: ordena a do cabeçalho clicado
+    var kind = regEl ? regEl.getAttribute('data-reg') : kindForTab();
+    var key = thEl.getAttribute('data-th');
+    var cur = STATE.sort[kind];
+    STATE.sort[kind] = (cur === key + '_desc') ? key + '_asc' : key + '_desc';
+    var selEl = $('.filters[data-kind="' + kind + '"] [data-sort]');
+    if (selEl) selEl.value = STATE.sort[kind];
+    renderRegion(kind);
+    return;
+  }
+
+  var clr = e.target.closest ? e.target.closest('[data-clear]') : null;
+  if (clr) {
+    var k = clr.getAttribute('data-clear');
+    STATE.f[k] = emptyFilters();
+    STATE.built = null; render();
+    return;
+  }
+
+  if (e.target.closest && e.target.closest('#drawerOverlay')) { closeDrawer(); return; }
+  if (e.target.id === 'retryBtn') { STATE.status = 'loading'; loadData(true); return; }
+});
+
+document.addEventListener('input', function (e) {
+  var f = e.target.getAttribute && e.target.getAttribute('data-f');
+  if (!f) return;
+  var box = e.target.closest('.filters');
+  var kind = box ? box.getAttribute('data-kind') : kindForTab();
+  STATE.f[kind][f] = e.target.value;
+  renderRegion(kind);
+});
+document.addEventListener('change', function (e) {
+  if (e.target.getAttribute && e.target.getAttribute('data-sort') != null) {
+    var box = e.target.closest('.filters');
+    var kind = box ? box.getAttribute('data-kind') : kindForTab();
+    STATE.sort[kind] = e.target.value;
+    renderRegion(kind);
+  }
+});
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') { closeDrawer(); closeCfg(); }
+});
+
+$('#refreshBtn').addEventListener('click', function () { loadData(true); });
+$('#cfgBtn').addEventListener('click', openCfg);
+$('#cfgModal').addEventListener('click', function (e) { if (e.target === this) closeCfg(); });
+
+$('#themeBtn').addEventListener('click', function () {
+  var root = document.documentElement;
+  var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  root.setAttribute('data-theme', next);
+  try { localStorage.setItem('fmct-theme-v2', next); } catch (e) {}
+  setThemeIcon(next);
+});
+function setThemeIcon (theme) {
+  var i = $('#themeIcon');
+  if (theme === 'light') i.innerHTML = '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  else i.innerHTML = '<path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/>';
+}
+
+/* ============================================================
+ * TIMERS
+ * ========================================================== */
+function tick () {
+  STATE.now = Date.now() + STATE.skew;
+  var d = STATE.lastSync ? new Date() : null;
+  var lu = $('#lastUpd');
+  if (STATE.lastSync) {
+    var s = STATE.lastSync;
+    lu.textContent = ('0' + s.getHours()).slice(-2) + ':' + ('0' + s.getMinutes()).slice(-2) + ':' + ('0' + s.getSeconds()).slice(-2);
+  }
+  updateSysPill();
+
+  // re-render "vivo" a cada 10s (sem mexer em inputs em foco)
+  STATE._t = (STATE._t || 0) + 1;
+  if (STATE._t % 10 === 0 && STATE.status === 'ok') {
+    var ae = document.activeElement;
+    var typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT') && ae.closest && ae.closest('.filters');
+    enrich();
+    if (STATE.tab === 'geral') fillGeral();
+    else if (!typing) { fillList(kindForTab()); }
+    else { renderRegion(kindForTab()); }
+    if (STATE.drawer.open) refreshDrawer();
+  }
+}
+function startTimers () {
+  if (STATE._clock) clearInterval(STATE._clock);
+  if (STATE._auto) clearInterval(STATE._auto);
+  STATE._clock = setInterval(tick, 1000);
+  var sec = ((STATE.cfg && STATE.cfg.autoRefreshSeconds) || 60);
+  STATE._auto = setInterval(function () { loadData(false); }, sec * 1000);
+}
+
+/* ============================================================
+ * BOOT
+ * ========================================================== */
+(function boot () {
+  try {
+    var saved = localStorage.getItem('fmct-theme-v2');
+    if (saved) { document.documentElement.setAttribute('data-theme', saved); }
+  } catch (e) {}
+  setThemeIcon(document.documentElement.getAttribute('data-theme') || 'light');
+
+  render(); // skeleton
+  loadData(false);
+
+  // (re)inicia timers apos primeiro payload
+  var wait = setInterval(function () {
+    if (STATE.status === 'ok' || STATE.status === 'error') { clearInterval(wait); startTimers(); }
+  }, 300);
+})();
+
+})();
+</script>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>First Mile · PE2</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+
+  <div class="aura" aria-hidden="true"></div>
+
+  <!-- Topo no estilo do painel "Produtividade por Turno" -->
+  <header class="topbar hero-fm">
+    <div class="topbar__inner">
+      <div class="hero-t">
+        <p class="hero-eb">SPX · Inbound</p>
+        <h1><em>First Mile</em> · PE2</h1>
+        <p class="hero-sub">Acompanhamento de veículos, Pickup e fluxo operacional</p>
+        <div class="hero-pills">
+          <span class="hp"><b>Fluxo</b> Pickup → SOC → Fila → Handover</span>
+          <div id="sysPill" class="syspill hp">
+            <span class="live"></span>
+            <span>Atualizado às <b id="lastUpd">--:--:--</b></span>
+          </div>
+        </div>
+      </div>
+
+      <svg class="hero-art" viewBox="0 0 400 130" aria-hidden="true">
+        <defs><linearGradient id="gArtFm" x1="0" x2="1"><stop offset="0" stop-color="#FF6A2B"/><stop offset="1" stop-color="#FF3D6E"/></linearGradient></defs>
+        <path d="M40 88 C 110 12, 200 12, 262 66 S 340 100, 366 76" fill="none" stroke="url(#gArtFm)" stroke-width="2" stroke-dasharray="3 6" stroke-linecap="round"/>
+        <g class="art-n"><circle cx="58" cy="70" r="9"/><circle cx="200" cy="30" r="9"/><circle cx="352" cy="84" r="9"/></g>
+        <g class="art-v"><text x="58" y="52" text-anchor="middle" id="artFila">—</text><text x="200" y="12" text-anchor="middle" id="artPickup">—</text><text x="352" y="66" text-anchor="middle" id="artConc">—</text></g>
+        <g class="art-l"><text x="58" y="96" text-anchor="middle">Na fila</text><text x="200" y="56" text-anchor="middle">Pickup</text><text x="352" y="110" text-anchor="middle">Concluídas</text></g>
+      </svg>
+
+      <div class="topbar__right hero-a">
+        <button id="themeBtn" class="btn btn--icon btn--ghost" title="Alternar tema" aria-label="Alternar tema">
+          <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+        </button>
+        <button id="cfgBtn" class="btn btn--icon btn--ghost" title="Configurações" aria-label="Configurações">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </button>
+        <button id="refreshBtn" class="btn btn--primary">
+          <svg class="spin-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.5 9a9 9 0 0114.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0020.5 15"/></svg>
+          <span>Atualizar</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <nav class="tabs" id="tabs" role="tablist">
+      <button class="tab is-active" data-tab="geral" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Visão Geral
+      </button>
+      <!-- Fila e Pickup agora ficam na Visão Geral: abas escondidas (os contadores continuam alimentando o topo) -->
+      <button class="tab" data-tab="fila" role="tab" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        Fila First Mile
+        <span class="tab__count" id="cntFila">–</span>
+      </button>
+      <button class="tab" data-tab="pickup" role="tab" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        Pickup
+        <span class="tab__count" id="cntPickup">–</span>
+      </button>
+      <button class="tab" data-tab="concluidas" role="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        Concluídas
+        <span class="tab__count" id="cntConcluidas">–</span>
+      </button>
+    </nav>
+
+    <div id="view"><!-- render alvo --></div>
+  </main>
+
+  <div class="overlay" id="drawerOverlay"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+
+  <div class="modal-ov" id="cfgModal"></div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <noscript><p style="padding:40px;text-align:center">É necessário habilitar JavaScript para usar este dashboard.</p></noscript>
+
+  <?!= include('App'); ?>
+  <script>
+    // Números do topo (Na fila / Pickup / Concluídas) acompanham os contadores das abas
+    (function () {
+      var par = [['cntFila', 'artFila'], ['cntPickup', 'artPickup'], ['cntConcluidas', 'artConc']];
+      function copia() { par.forEach(function (p) { var a = document.getElementById(p[0]), b = document.getElementById(p[1]); if (a && b) b.textContent = a.textContent || '—'; }); }
+      var obs = new MutationObserver(copia);
+      par.forEach(function (p) { var a = document.getElementById(p[0]); if (a) obs.observe(a, { childList: true, characterData: true, subtree: true }); });
+      copia();
+    })();
+  </script>
+</body>
+</html>
