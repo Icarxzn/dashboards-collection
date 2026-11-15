@@ -41,9 +41,10 @@ def montar(pasta, variaveis):
     return re.sub(r"<\?=\s*(\w+)\s*\?>", lambda m: variaveis[m.group(1)], html)
 
 
-def stub(respostas):
-    """google.script.run falso: cada função devolve o JSON de 'respostas' (como o Code.gs, em string)."""
-    return """<script>
+def stub(respostas, objeto=False):
+    """google.script.run falso: cada função devolve o JSON de 'respostas' (como o Code.gs, em string;
+    com objeto=True devolve o próprio objeto, como faz o Code.js do First Mile)."""
+    return ("""<script>
 const __d = %s;
 window.google = { script: { run: (function mk(ok, fail) {
   return new Proxy({}, { get(_, k) {
@@ -51,11 +52,11 @@ window.google = { script: { run: (function mk(ok, fail) {
     if (k === 'withFailureHandler') return f => mk(ok, f);
     return (...a) => setTimeout(() => {
       const v = __d[k] === undefined ? { error: 'sem dados de exemplo' } : __d[k];
-      if (ok) ok(typeof v === 'string' ? v : JSON.stringify(v));
+      if (ok) ok(typeof v === 'string' || __obj ? v : JSON.stringify(v));
     }, 30);
   } });
 })(null, null) } };
-</script>""" % json.dumps(respostas, ensure_ascii=False)
+</script>""" % json.dumps(respostas, ensure_ascii=False)).replace("const __d", "const __obj = %s; const __d" % ("true" if objeto else "false"))
 
 
 # ── dados fictícios ────────────────────────────────────────────────────────
@@ -160,6 +161,99 @@ def fifo_mock():
             "unidades": unidades, "_hoje": hoje}
 
 
+def _iso(ts):
+    return time.strftime("%Y-%m-%dT%H:%M:%S-03:00", time.localtime(ts))
+
+
+def _dia_op(ts):
+    t = time.localtime(ts)
+    return time.strftime("%Y-%m-%d", time.localtime(ts - 86400 if t.tm_hour < 6 else ts))
+
+
+def produtividade_turno():
+    """Painel 09: produção por colaborador e hora nos últimos 14 dias operacionais + meta por hora."""
+    ordem = list(range(6, 24)) + list(range(0, 6))
+    hoje = _dia_op(AGORA)
+    hora_agora = time.localtime(AGORA).tm_hour
+    feitas = ordem[:ordem.index(hora_agora) + 1]
+    ops = [("Ops%03d" % i, "OPERADOR EXEMPLO %02d" % i) for i in range(1, 25)]
+    prod, plan = {}, {}
+    for k in range(14):
+        dia = time.strftime("%Y-%m-%d", time.localtime(time.mktime(time.strptime(hoje, "%Y-%m-%d")) - k * 86400 + 43200))
+        horas = feitas if k == 0 else ordem
+        plan[dia] = {str(h): (5200 if 6 <= h < 22 else 3800) for h in ordem}
+        lst = []
+        for j, (oid, nome) in enumerate(ops):
+            turno = ordem[(j % 3) * 8:(j % 3) * 8 + 8]
+            hh = {str(h): rnd.randint(380, 640) for h in horas if h in turno and rnd.random() > 0.08}
+            if hh:
+                lst.append({"id": oid, "n": nome, "h": hh})
+        prod[dia] = lst
+    return {"cfg": {"refreshSec": 60}, "stamp": "Atualizado: " + time.strftime("%d/%m/%Y %H:%M", time.localtime(AGORA)),
+            "generatedAt": ISO_AGORA, "ledger": True, "prod": prod, "plan": plan}
+
+
+def first_mile():
+    """Painel 10: fila do SOC, pickup, concluídos do dia e o Forecast (aba Forcast) de hoje até D-7."""
+    M = 60
+    nome = lambda i: "MOTORISTA EXEMPLO %02d" % i
+    placa = lambda i: "ABC%dD%02d" % (i % 10, i)
+    base = dict(agency_name="TRANSPORTADORA", route="ROTA EXEMPLO", cluster="", vehicle_type="HR", raw_status="",
+                arrival_match_method="fila", saida_prevista=None, paradas=8, paradas_feitas=0, sellers=8, _rows=1)
+    queue, pickup, lista_hoje = [], [], []
+    # em doca / na fila / chegou sem fila
+    for i, (doca, qn, soc_min) in enumerate([("Doca Interna 78 FM", "FM00101", 35), ("", "FM00102", 18), ("", "", 6)]):
+        pk = AGORA - (soc_min + 70) * M
+        queue.append(dict(base, trip_id="58000%02d" % i, qtd_order=[1150, 640, 320][i], driver_name=nome(i), placa=placa(i),
+                          last_pickup_time=_iso(pk), last_handover_time=None, soc_arrival_time=_iso(AGORA - soc_min * M),
+                          doca_ocupada=doca, queue_number=qn, chegada_prevista=_iso(AGORA - (soc_min + 10) * M),
+                          pacotes_coletados=None, pacotes_recebidos=None, pacotes_a_caminho=0))
+    # concluídos hoje
+    for i in range(3, 13):
+        ho = AGORA - (i - 2) * 38 * M
+        soc = ho - rnd.randint(4, 30) * M
+        queue.append(dict(base, trip_id="58000%02d" % i, qtd_order=rnd.randint(80, 1300), driver_name=nome(i), placa=placa(i),
+                          last_pickup_time=_iso(soc - rnd.randint(40, 95) * M), last_handover_time=_iso(ho),
+                          soc_arrival_time=_iso(soc), doca_ocupada="", queue_number="FM00%03d" % i,
+                          chegada_prevista=_iso(soc), pacotes_coletados=None, pacotes_recebidos=None, pacotes_a_caminho=0))
+        lista_hoje.append({"trip_id": "58000%02d" % i, "placa": placa(i), "rota": "ROTA EXEMPLO %02d" % i,
+                           "agencia": "TRANSPORTADORA", "veiculo": "HR", "saida": _iso(AGORA - 9 * 3600),
+                           "status": "Finalizadas", "handover": _iso(ho), "previsto": 600, "coletado": 600, "descarregado": 600})
+    # pickup: coletando, coleta realizada, em deslocamento
+    for i, (bs, aguard, min_pk) in enumerate([(6, 3, 25), (2, 0, 6), (2, 0, 48), (2, 0, 95)], start=13):
+        pickup.append(dict(base, trip_id="58000%02d" % i, qtd_order=rnd.randint(300, 1500), driver_name=nome(i), placa="",
+                           last_pickup_time=_iso(AGORA - min_pk * M), last_handover_time=None, soc_arrival_time=None,
+                           doca_ocupada="", queue_number="", arrival_match_method=None,
+                           chegada_prevista=_iso(AGORA + rnd.randint(20, 120) * M), business_status=bs,
+                           sellers_aguardando=aguard, sellers_coletados=8 - aguard, pacotes_coletados=500,
+                           pacotes_recebidos=0, pacotes_a_caminho=rnd.randint(150, 900)))
+        lista_hoje.append({"trip_id": "58000%02d" % i, "placa": "", "rota": "ROTA EXEMPLO %02d" % i, "agencia": "TRANSPORTADORA",
+                           "veiculo": "HR", "saida": _iso(AGORA - 5 * 3600), "status": "Iniciada", "handover": None,
+                           "previsto": 600, "coletado": 450, "descarregado": 0})
+    dias = []
+    for k in range(8):
+        dia = time.strftime("%Y-%m-%d", time.localtime(AGORA - k * 86400))
+        if k == 0:
+            lst = lista_hoje
+        else:
+            lst = [{"trip_id": "57%d%04d" % (k, j), "placa": placa(j), "rota": "ROTA EXEMPLO %02d" % j, "agencia": "TRANSPORTADORA",
+                    "veiculo": "HR", "saida": None, "status": "Finalizadas", "handover": _iso(AGORA - k * 86400),
+                    "previsto": 700, "coletado": 700, "descarregado": 700} for j in range(30 + k)]
+        fin = sum(1 for x in lst if x["handover"])
+        dias.append({"dia": dia, "offset": k, "veiculos": len(lst), "finalizadas": fin, "semTrip": 0, "lista": lst,
+                     "previsto": sum(x["previsto"] for x in lst), "coletado": sum(x["coletado"] for x in lst),
+                     "descarregado": sum(x["descarregado"] for x in lst)})
+    cfg = {"spreadsheetId": "exemplo", "tabTrips": "FMTrip", "tabQueue": "Inbound Queue List", "arrivalMatchWindowHours": 6,
+           "pickupMaxAgeHours": 24, "queue": {"okMax": 60, "attentionMax": 120}, "pickup": {"okMax": 60, "attentionMax": 120},
+           "slaMinutes": 180, "queueAgingBasis": "handover", "consolidateOrders": "sum",
+           "bottleneck": {"pickupCriticalCount": 3, "socCriticalCount": 3}, "autoRefreshSeconds": 600}
+    docks = [{"name": "Doca Interna %d FM" % n, "busy": n == 78, "driver": nome(0) if n == 78 else "",
+              "placa": placa(0) if n == 78 else "", "orders": 1150 if n == 78 else 0} for n in range(76, 81)]
+    return {"ok": True, "version": "exemplo", "serverNow": ISO_AGORA, "tz": "America/Recife", "config": cfg,
+            "queue": queue, "pickup": pickup, "docks": docks, "waiting": [], "forecast": {"dias": dias},
+            "meta": {"skipped": {}, "filaSemTrip": 0}}
+
+
 # ── o que fotografar em cada dashboard ─────────────────────────────────────
 def casos():
     ruas = ruas_stage_out()
@@ -193,6 +287,15 @@ def casos():
                                        dados={"getSacasHistory": sacas_hist, "getSacasPlanejamento": sacas_plan},
                                        fotos=[("preview-dashboard.png", "")]),
         "07-fifo-stage-in": dict(pasta="app", vars={}, mock=fifo_mock(), fotos=[("preview-dashboard.png", "")]),
+        "09-produtividade-turno": dict(pasta="pe2", vars={"unidade": "PE2"},
+                                       dados={"getDashboardData": produtividade_turno()},
+                                       fotos=[("preview-dashboard.png", "")]),
+        "10-first-mile": dict(pasta="app", vars={}, objeto=True,
+                              dados={"getPayload": first_mile(), "getConfig": first_mile()["config"]},
+                              fotos=[("preview-dashboard.png", ""),
+                                     ("preview-veiculos.png",
+                                      "document.querySelectorAll('#view > .section').forEach(function (s, i) {"
+                                      " if (i > 0 && i < 5) s.style.display = 'none'; })")]),
     }
 
 
@@ -220,7 +323,7 @@ def main():
             pasta = os.path.join(RAIZ, "dashboards", dash, c["pasta"])
             html = montar(pasta, c["vars"])
             injeta = (("<script>window.MOCK = %s;</script>" % json.dumps(c["mock"], ensure_ascii=False))
-                      if "mock" in c else stub(c["dados"]))
+                      if "mock" in c else stub(c["dados"], c.get("objeto", False)))
             html = re.sub(r"(<head[^>]*>)", r"\1" + injeta.replace("\\", "\\\\"), html, count=1)
             arq = os.path.join(tmp, dash + ".html")
             open(arq, "w", encoding="utf-8").write(html)

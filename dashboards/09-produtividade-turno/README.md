@@ -1,5 +1,7 @@
 # 09 · Produtividade por Turno
 
+![Prévia (dados fictícios)](preview-dashboard.png)
+
 Painel "Control Tower" da produtividade por **turno** e por **hora**: produção real × meta, atingimento,
 cartões dos turnos T1/T2/T3, gráfico hora a hora, evolução dos últimos 14 dias e produtividade individual
 (top 10, abaixo da média da equipe, tabela com busca e exportação CSV). Visual replicado do painel PE4 que

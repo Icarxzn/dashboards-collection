@@ -16,8 +16,8 @@ rótulo da unidade no `CONFIG` do `Code.gs`.
 | 06 | **Produtividade de Sacas** | % de pacotes em saca por dia operacional/turno, hora a hora × planejado | [README](dashboards/06-produtividade-sacas/README.md) | ![](dashboards/06-produtividade-sacas/preview-dashboard.png) |
 | 07 | **FIFO Stage IN** | Quebra de FIFO no stage de entrada, ofensores × headcount (PE2 + PE4 num só painel) | [README](dashboards/07-fifo-stage-in/README.md) | ![](dashboards/07-fifo-stage-in/preview-dashboard.png) |
 | 08 | **Produtividade por Operador** | Produção hora a hora × meta (aba Meta) por turno, operadores na meta de 500/h (só PE2 por enquanto) | [README](dashboards/08-produtividade-operadores/README.md) | ![](dashboards/08-produtividade-operadores/preview-dashboard.png) |
-| 09 | **Produtividade por Turno** | Control Tower por turno e hora: real × meta (aba Plano), atingimento, evolução 14 dias, produtividade individual; histórico na aba _LEDGER_PROD | [README](dashboards/09-produtividade-turno/README.md) | — |
-| 10 | **First Mile** | Pickup → SOC → fila → handover: fluxo, gargalo, concentração de chegadas por hora, tabelas da fila e do pickup (PE2) | [README](dashboards/10-first-mile/README.md) | — |
+| 09 | **Produtividade por Turno** | Control Tower por turno e hora: real × meta (aba Plano), atingimento, evolução 14 dias, produtividade individual; histórico na aba _LEDGER_PROD | [README](dashboards/09-produtividade-turno/README.md) | ![](dashboards/09-produtividade-turno/preview-dashboard.png) |
+| 10 | **First Mile** | Forecast do dia (aba Forcast, até D-7), fluxo por etapa (Pickup → Coleta → Deslocamento → SOC → Fila → Recebendo → Handover), gargalo, concentração por hora e lista única de veículos (PE2) | [README](dashboards/10-first-mile/README.md) | ![](dashboards/10-first-mile/preview-dashboard.png) |
 | — | **Report FIFO no Seatalk** | Mensagem + imagem diária de quebra de FIFO (Python) | [README](report-fifo-seatalk/README.md) | — |
 
 > As imagens de preview usam **dados fictícios** (geradas por `tools/gerar_previews.py`).

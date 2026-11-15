@@ -1,5 +1,9 @@
 # 10 · First Mile · PE2
 
+![Prévia (dados fictícios)](preview-dashboard.png)
+
+![Lista de veículos (dados fictícios)](preview-veiculos.png)
+
 Acompanhamento dos veículos do **First Mile**: quem está em **Pickup** (coletou e ainda não chegou ao SOC),
 quem está na **fila** do SOC aguardando handover e o que já foi **concluído**. Mostra fluxo, gargalo,
 concentração de chegadas por hora e as tabelas de cada etapa.
