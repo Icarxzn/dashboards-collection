@@ -194,6 +194,12 @@ function diaOperacional_(d) {
 // ═══════════════════════════════════════════════════════════════
 const LEDGER_CAB = ['dia', 'ops_id', 'nome'].concat(Array.from({ length: 24 }, (_, h) => 'h' + h));
 
+/** Garante que a aba tenha pelo menos 'ate' linhas (a aba nasce com 1000; gravar além disso dá erro). */
+function garantirLinhas_(sh, ate) {
+  const max = sh.getMaxRows();
+  if (ate > max) sh.insertRowsAfter(max, ate - max + 500);
+}
+
 /** Abre a aba de histórico; na primeira vez, cria no fim da planilha com o cabeçalho. */
 function abaHistorico_(ss) {
   let sh = ss.getSheetByName(CONFIG.ABA_HIST);
@@ -248,6 +254,7 @@ function atualizarHistorico_(ss, janela) {
 
     if (n > 0) sh.getRange(2, 1, n, LEDGER_CAB.length).clearContent();
     if (manter.length) {
+      garantirLinhas_(sh, manter.length + 1);
       sh.getRange(2, 1, manter.length, 3).setNumberFormat('@');   // dia/ops/nome como texto (sem virar data)
       sh.getRange(2, 1, manter.length, LEDGER_CAB.length).setValues(
         manter.map(l => l.map((v, j) => j < 3 ? String(v) : Number(v) || 0)));
@@ -551,6 +558,7 @@ function montarEsteiras_(ss, planoEst, janela) {
     const manter = linhas.filter(l => l[0] >= corteIso && temDado(l)).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
     if (n > 0) sh.getRange(2, 1, n, EST_CAB.length).clearContent();
     if (manter.length) {
+      garantirLinhas_(sh, manter.length + 1);
       sh.getRange(2, 1, manter.length, 3).setNumberFormat('@');
       sh.getRange(2, 1, manter.length, EST_CAB.length).setValues(manter.map(l => l.map((x, j) => j < 2 ? String(x) : j === 2 ? JSON.stringify(x) : Number(x) || 0)));
     }

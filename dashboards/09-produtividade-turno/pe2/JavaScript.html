@@ -350,7 +350,7 @@ function renderEsteiras() {
   var sinal = function (v) { return (v > 0 ? '+' : '') + fmt(v); };
   var cards = E.esteiras.map(function (e) {
     var x = estDados(e.id, S.date, S.turno);
-    if (!x.plan && !x.real) return '';
+    // as 4 esteiras aparecem sempre (mesmo sem plano e sem produção no filtro)
     var st = estStatus(x), gap = x.real - x.plan, gp = x.plan ? (x.real / x.plan - 1) * 100 : null;
     var prodReal = x.hc ? Math.round(x.real / x.hc) : null, prodPlan = x.hcPlan ? Math.round(x.plan / x.hcPlan) : null;
     var efic = prodReal != null && prodPlan ? prodReal / prodPlan * 100 : null;
