@@ -369,4 +369,24 @@ button.pk .spk { margin-top: 2px; max-width: 100%; }
 /* barras de rolagem invisíveis (página, tabelas, gráficos e painel lateral) — a rolagem continua funcionando */
 html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
 ::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }
+
+/* topo: esteira de produtividade - operadores nas estações e pacotes indo para a saca */
+.art-belt { fill: var(--surface); stroke: var(--border-s); stroke-width: 1.2; }
+.art-move { stroke: var(--muted); stroke-width: 2; opacity: .55; stroke-dasharray: 8 7; stroke-linecap: round; animation: artBelt .8s linear infinite; }
+.art-roll circle { fill: var(--surface2); stroke: var(--muted); stroke-width: 1.4; }
+.art-leg line { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; opacity: .4; }
+.op circle:not(.op-led), .op path { fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; opacity: .85; }
+.op-ws { fill: var(--brand); fill-opacity: .15; stroke: var(--brand); stroke-width: 1.4; }
+.op-led { fill: var(--ok); animation: opLed 1.2s ease-in-out infinite; }
+.pk line { stroke: rgba(0,0,0,.25); stroke-width: 1.2; }
+.fl-lbl { font-size: 9px; font-weight: 700; letter-spacing: .1em; fill: var(--muted); text-anchor: middle; }
+.fl-lbl-hot { fill: var(--brand); }
+.fl-bag path { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.fl-bag path:nth-child(3) { fill: var(--brand); fill-opacity: .14; }
+.fl-bag .fl-seam { stroke-dasharray: 2 4; stroke-width: 1.2; opacity: .7; }
+.fl-halo { fill: var(--brand); fill-opacity: .06; stroke: var(--brand); stroke-opacity: .25; stroke-width: 1.2; animation: flHalo 3s ease-in-out infinite; transform-origin: 366px 88px; }
+@keyframes artBelt { to { stroke-dashoffset: -15; } }
+@keyframes opLed { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@keyframes flHalo { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .art-move, .op-led, .fl-halo { animation: none; } }
 </style>

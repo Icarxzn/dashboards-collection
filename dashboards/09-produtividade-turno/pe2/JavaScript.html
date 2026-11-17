@@ -92,6 +92,7 @@ function render() {
   $('#art0').textContent = a.real ? fmt(a.real) : '—';
   $('#art1').textContent = a.meta ? fmt(a.meta) : '—';
   $('#art2').textContent = a.p == null ? '—' : Math.round(a.p) + '%';
+  (function () { var f = document.getElementById('artFill'); if (!f) return; var p = a.p == null ? 0 : a.p; f.setAttribute('width', String(Math.max(0, Math.min(100, p)) * 0.64)); f.setAttribute('class', 'art-fill' + (p >= 100 ? ' ok' : p >= 85 ? ' warn' : '')); })();
   $('#art3').textContent = fmt(ppl.length);
   renderFilters(ds);
   renderPanorama(rows, a, ppl, ds);
