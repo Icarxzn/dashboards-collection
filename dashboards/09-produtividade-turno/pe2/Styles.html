@@ -366,6 +366,7 @@ button.pk .spk { margin-top: 2px; max-width: 100%; }
 .est-ch { position: relative; height: 190px; }
 .est-tbl { max-height: 240px; overflow: auto; }
 .est-nota { margin-top: -4px; }
-.est-conf { grid-column: 1 / -1; }
-.est-conf p { font-size: 13px; line-height: 1.55; margin: 4px 0; }
+/* barras de rolagem invisíveis (página, tabelas, gráficos e painel lateral) — a rolagem continua funcionando */
+html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
+::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }
 </style>

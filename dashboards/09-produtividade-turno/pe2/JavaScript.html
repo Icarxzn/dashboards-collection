@@ -371,7 +371,7 @@ function renderEsteiras() {
       (vw === 'tbl' ? estTabela(x.rows) : '<div class="est-ch"><canvas id="estCh_' + e.id + '"></canvas></div>') +
     '</div>';
   }).join('');
-  box.innerHTML = (cards || '<div class="card empty">' + ic('layers') + '<p>Nenhuma esteira com plano ou produção neste filtro.</p></div>') + estConferencia();
+  box.innerHTML = cards || '<div class="card empty">' + ic('layers') + '<p>Nenhuma esteira com plano ou produção neste filtro.</p></div>';
   E.esteiras.forEach(function (e) {
     var cv = document.getElementById('estCh_' + e.id); if (!cv) return;
     var x = estDados(e.id, S.date, S.turno), vw = S.estView[e.id] || 'bar', cb = chartBase(), brand = cssv('--brand'), cinza = cssv('--t-safe');
@@ -388,28 +388,6 @@ function renderEsteiras() {
       scales: { x: { grid: { display: false }, ticks: { color: cb.txt, font: { size: 10 }, maxRotation: 0, autoSkip: x.rows.length > 12, maxTicksLimit: 12 } },
         y: { beginAtZero: true, grid: { color: cb.grid }, ticks: { color: cb.txt, font: { size: 10 }, maxTicksLimit: 6, callback: function (v) { return fmt(v); } } } } } });
   });
-}
-/* Conferência: esteiras × produção total do filtro e a base Productivity Workstation × cadastro de estações */
-function estConferencia() {
-  var E = D.est || {}, c = E.conf, rows = hourRows(S.date, S.turno), total = 0, soma = 0;
-  rows.forEach(function (r) { total += r.real; });
-  (E.esteiras || []).forEach(function (e) { soma += estDados(e.id, S.date, S.turno).real; });
-  var ok = function (b) { return '<b style="color:' + (b ? 'var(--ok)' : 'var(--late)') + '">' + (b ? '✓' : '!') + '</b> '; };
-  var fora = Math.max(0, total - soma);
-  var linhas = [
-    ok(soma <= total) + 'Produção nas esteiras: <b>' + fmt(soma) + '</b> de <b>' + fmt(total) + '</b> produzidos no filtro (aba Consulta) · ' +
-      fmt(fora) + ' fora de esteira (staging, recebimento, LH…)' + (soma > total ? ' — <b>esteiras passaram do total: verificar</b>' : '')
-  ];
-  if (c) {
-    var pk = c.packingSemEsteira.filter(function (x) { return !/^RETURN/.test(x.ws); });
-    linhas.push(ok(!pk.length) + 'Estações de packing da Productivity Workstation sem esteira no cadastro (aba Workstation): ' + (pk.length ?
-      '<b>' + pk.map(function (x) { return esc(x.ws) + ' (' + fmt(x.tot) + ')'; }).join(', ') + '</b> — inclua na aba Workstation com a esteira' : '<b>nenhuma</b> (Return_P é devolução, fica fora)'));
-    var pe = c.porEsteira || {}, nomes = {}; (E.esteiras || []).forEach(function (e) { nomes[e.id] = e.nome; });
-    linhas.push('<span class="muted">Throughput do dia na Productivity Workstation: ' + Object.keys(pe).map(function (k) { return esc(nomes[k] || k) + ' ' + fmt(pe[k]); }).join(' · ') +
-      ' · packing total ' + fmt(c.totalPacking) + '</span>');
-  }
-  return '<div class="card est-conf"><div class="card-h"><h3>Conferência da base</h3><span class="muted xs">' + fmtDate(S.date) + ' · ' + (S.turno === 'ALL' ? 'todos os turnos' : S.turno) + '</span></div>' +
-    linhas.map(function (l) { return '<p>' + l + '</p>'; }).join('') + '</div>';
 }
 function estTabela(rows) {
   return '<div class="tbl-scroll est-tbl"><table class="tbl"><thead><tr><th>Hora</th><th class="num-r">Planejado</th><th class="num-r">Real</th><th class="num-r">HC</th><th class="num-r">Gap</th><th class="num-r">%</th></tr></thead><tbody>' +
