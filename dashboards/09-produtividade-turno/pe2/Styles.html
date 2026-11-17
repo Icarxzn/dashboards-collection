@@ -349,4 +349,23 @@ button.pk .spk { margin-top: 2px; max-width: 100%; }
  
 .chart-scroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
 .chart-wrap.tall { height: 340px; }
+/* ───── Performance por esteira ───── */
+.est-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.est-card { display: flex; flex-direction: column; gap: 10px; }
+.est-h { display: flex; align-items: center; gap: 8px; }
+.est-h h3 { font-size: 15px; font-weight: 700; }
+.est-st { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); padding: 3px 9px; border-radius: 99px; }
+.est-st i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.est-dd { margin-left: auto; }
+.est-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.et { background: var(--surface2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.et span { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.et b { font-size: 16px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.est-seg { align-self: flex-start; }
+.est-seg button { min-width: 38px; }
+.est-ch { position: relative; height: 190px; }
+.est-tbl { max-height: 240px; overflow: auto; }
+.est-nota { margin-top: -4px; }
+.est-conf { grid-column: 1 / -1; }
+.est-conf p { font-size: 13px; line-height: 1.55; margin: 4px 0; }
 </style>

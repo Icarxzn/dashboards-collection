@@ -62,3 +62,22 @@ Função do servidor: `getDashboardData(force)` →
 - Externas (CDN): Chart.js 4.4.1, Google Fonts (Inter, Fira Code).
 - **PE4 neste padrão:** copie `pe2/`, troque `SHEET_ID`/`UNIDADE` e os nomes das abas no `CONFIG`, crie o projeto
   e a implantação (ver README principal).
+
+## Performance por esteira (seção 6)
+
+Cards por esteira no fim da página (abaixo da lista de colaboradores): Planejado, Real, Gap, HC, Eficiência,
+Produtividade e gráfico planejado × real hora a hora (barras, linha ou tabela) + Drill-down.
+
+- **Regra da maioria (igual às TVs das esteiras)**: a aba `Workstation` da planilha de origem do PE2
+  (`CONFIG.ORIGEM_ID`, a mesma que alimenta a Consulta) tem check-in/check-out por operador e estação. Em cada hora,
+  soma os minutos do operador logado em todas as estações e nas estações de cada esteira; se a esteira com mais minutos
+  tiver metade ou mais, a produção inteira do operador naquela hora (aba Consulta, ligada pelo código Ops) conta para ela.
+- **Qual estação é de qual esteira**: coluna `Esteira` da aba `Workstation` desta planilha (Workstation Name → Esteira A,
+  Esteira B, Termoplástica ou Full). Mudou a esteira de uma estação? É só trocar ali. Sem a coluna preenchida, vale o
+  prefixo em `ESTEIRAS` (`P2_AU` = A · `P1_AU` = B · `P1_TE` = Termoplástica · `P3_AU` = Full).
+- **Histórico**: a Consulta só tem ~12 h, então cada hora calculada fica na aba `_LEDGER_ESTEIRA` (criada pelo script).
+  A aba Workstation da origem vira à meia-noite (só guarda check-ins do dia do relógio), então só são recalculadas as horas
+  de hoje; as de antes ficam como estavam no histórico.
+- **Planejado**: aba `Plano`, pelo "Tipo processo" de cada esteira.
+- **HC real**: pessoas diferentes que tiveram horas contadas na esteira no turno (ou no dia).
+  **HC planejado**: `hcPlano` em `ESTEIRAS` (vazio = "—"; sem ele, Prod. plan. e Eficiência ficam "—").

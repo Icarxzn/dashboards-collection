@@ -8,7 +8,7 @@ var SH = { T1: [6, 7, 8, 9, 10, 11, 12, 13], T2: [14, 15, 16, 17, 18, 19, 20, 21
 var ORDER = SH.T1.concat(SH.T2, SH.T3);
 var TURNO_COLOR = { T1: 'var(--sh1)', T2: 'var(--sh2)', T3: 'var(--sh3)' };
 var firstDone = false;
-var S = { date: null, turno: 'ALL', sort: 'total', q: '', shown: 25 };
+var S = { date: null, turno: 'ALL', sort: 'total', q: '', shown: 25, estView: {} };
 
 var $ = function (s, r) { return (r || document).querySelector(s); };
 var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
@@ -99,6 +99,7 @@ function render() {
   renderHour(rows, a);
   renderEvo(ds);
   renderPeople(ppl);
+  renderEsteiras();
   if (!firstDone) { firstDone = true; setTimeout(reveal, 30); }
 }
 
@@ -315,6 +316,123 @@ function openSheet(id) {
 }
 
  
+/* ───────── Performance por esteira (aba Productivity Workstation + Plano) ───────── */
+function estDados(id, day, turno) {
+  var E = D.est || {}, dd = ((E.porDia || {})[day] || {})[id] || { h: {}, m: {}, hc: {} }, pl = ((E.plano || {})[day] || {})[id] || {};
+  var hs = hoursOf(turno), now = Date.now();
+  var rows = hs.map(function (h) {
+    var s = hourStart(day, h);
+    return { h: h, plan: pl[h] || 0, real: dd.h[h] || 0, mp: dd.m[h] || null, started: s <= now, live: s <= now && s + 36e5 > now };
+  });
+  var plan = 0, real = 0; rows.forEach(function (r) { plan += r.plan; real += r.real; });
+  // HC real: pessoas diferentes que passaram pela esteira no turno (ou no dia)
+  var hc = (dd.hc || {})[turno] || null, hcProd = (dd.hcProd || {})[turno] || null;
+  var est = (E.esteiras || []).filter(function (x) { return x.id === id; })[0] || {};
+  var hcPlan = null;
+  if (est.hcPlano) {
+    if (turno === 'ALL') { var t = 0, ok = false; ['T1', 'T2', 'T3'].forEach(function (k) { if (est.hcPlano[k] != null) { t += est.hcPlano[k]; ok = true; } }); hcPlan = ok ? t : null; }
+    else hcPlan = est.hcPlano[turno] != null ? est.hcPlano[turno] : null;
+  }
+  return { rows: rows, plan: plan, real: real, hc: hc, hcProd: hcProd, hcPlan: hcPlan };
+}
+function estStatus(x) {
+  var live = x.rows.filter(function (r) { return r.live; })[0], last = x.rows.filter(function (r) { return r.started; }).slice(-2);
+  var produz = last.some(function (r) { return r.real > 0; });
+  if (live && (produz || live.plan > 0)) return produz ? ['Em operação', 'var(--ok)'] : ['Parada', 'var(--late)'];
+  return x.real > 0 ? ['Encerrada', 'var(--muted)'] : ['Sem produção', 'var(--muted)'];
+}
+function renderEsteiras() {
+  var E = D.est, box = $('#estGrid');
+  if (!E || E.erro || !E.esteiras) { box.innerHTML = '<div class="card empty">' + ic('alert') + '<p>' + esc(E && E.erro ? 'Não foi possível ler a aba Productivity Workstation: ' + E.erro : 'Aba Productivity Workstation ainda não lida.') + '</p></div>'; return; }
+  $('#estSub').textContent = fmtDate(S.date) + ' · ' + (S.turno === 'ALL' ? 'todos os turnos' : S.turno) + ' · clique em Drill-down para ver hora a hora';
+  Object.keys(CH).forEach(function (k) { if (k.indexOf('est_') === 0) { CH[k].destroy(); delete CH[k]; } });
+  var tile = function (l, v, c) { return '<div class="et"><span>' + l + '</span><b' + (c ? ' style="color:' + c + '"' : '') + '>' + v + '</b></div>'; };
+  var sinal = function (v) { return (v > 0 ? '+' : '') + fmt(v); };
+  var cards = E.esteiras.map(function (e) {
+    var x = estDados(e.id, S.date, S.turno);
+    if (!x.plan && !x.real) return '';
+    var st = estStatus(x), gap = x.real - x.plan, gp = x.plan ? (x.real / x.plan - 1) * 100 : null;
+    var prodReal = x.hc ? Math.round(x.real / x.hc) : null, prodPlan = x.hcPlan ? Math.round(x.plan / x.hcPlan) : null;
+    var efic = prodReal != null && prodPlan ? prodReal / prodPlan * 100 : null;
+    var cor = function (v) { return v == null ? null : v >= 0 ? 'var(--ok)' : 'var(--late)'; };
+    var vw = S.estView[e.id] || 'bar';
+    return '<div class="card est-card">' +
+      '<div class="est-h"><h3>' + esc(e.nome) + '</h3><span class="est-st" style="--c:' + st[1] + '"><i></i>' + st[0] + '</span>' +
+        '<button class="btn-s est-dd" data-act="estDrill" data-v="' + e.id + '">Drill-down ↗</button></div>' +
+      '<div class="est-tiles">' +
+        tile('Planejado', x.plan ? fmt(x.plan) : '—') + tile('Real', fmt(x.real)) + tile('Gap', x.plan ? sinal(gap) : '—', x.plan ? cor(gap) : null) +
+        tile('HC plan.', x.hcPlan != null ? fmt(x.hcPlan) : '—') + tile('HC real', x.hc != null ? fmt(x.hc) : '—') +
+        tile('Eficiência', efic != null ? fmt1(efic) + '%' : '—', efic != null ? (efic >= 100 ? 'var(--ok)' : 'var(--late)') : null) +
+        tile('Prod. plan.', prodPlan != null ? fmt(prodPlan) : '—') + tile('Prod. real', prodReal != null ? fmt(prodReal) : '—') +
+        tile('Gap %', gp != null ? (gp > 0 ? '+' : '') + fmt1(gp) + '%' : '—', cor(gp)) +
+      '</div>' +
+      '<div class="seg est-seg" role="group" aria-label="Visualização">' +
+        ['bar', 'line', 'tbl'].map(function (k) { return '<button data-act="estView" data-v="' + e.id + '|' + k + '" aria-pressed="' + (vw === k) + '" title="' + { bar: 'Barras', line: 'Linha', tbl: 'Tabela' }[k] + '">' + { bar: '▮', line: '╱', tbl: '☷' }[k] + '</button>'; }).join('') + '</div>' +
+      (vw === 'tbl' ? estTabela(x.rows) : '<div class="est-ch"><canvas id="estCh_' + e.id + '"></canvas></div>') +
+    '</div>';
+  }).join('');
+  box.innerHTML = (cards || '<div class="card empty">' + ic('layers') + '<p>Nenhuma esteira com plano ou produção neste filtro.</p></div>') + estConferencia();
+  E.esteiras.forEach(function (e) {
+    var cv = document.getElementById('estCh_' + e.id); if (!cv) return;
+    var x = estDados(e.id, S.date, S.turno), vw = S.estView[e.id] || 'bar', cb = chartBase(), brand = cssv('--brand'), cinza = cssv('--t-safe');
+    var lbl = { id: 'lbl', afterDatasetsDraw: function (ch) {
+      var ctx = ch.ctx, meta = ch.getDatasetMeta(1); ctx.save(); ctx.font = '700 10px Inter, sans-serif'; ctx.fillStyle = brand; ctx.textAlign = 'center';
+      meta.data.forEach(function (b, i) { var v = x.rows[i].real; if (v > 0) ctx.fillText(fmtK(v), b.x, b.y - 4); }); ctx.restore();
+    } };
+    CH['est_' + e.id] = new Chart(cv, { type: vw === 'line' ? 'line' : 'bar', plugins: [lbl], data: {
+      labels: x.rows.map(function (r) { return r.h + 'h'; }),
+      datasets: [
+        { label: 'Planejado', data: x.rows.map(function (r) { return r.plan; }), backgroundColor: cinza, borderColor: cinza, borderRadius: 3, tension: .35, pointRadius: vw === 'line' ? 2 : 0, barPercentage: .8, categoryPercentage: .7 },
+        { label: 'Real', data: x.rows.map(function (r) { return r.started ? r.real : null; }), backgroundColor: brand, borderColor: brand, borderRadius: 3, tension: .35, pointRadius: vw === 'line' ? 3 : 0, barPercentage: .8, categoryPercentage: .7 }
+      ] }, options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 14 } }, plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+      scales: { x: { grid: { display: false }, ticks: { color: cb.txt, font: { size: 10 }, maxRotation: 0, autoSkip: x.rows.length > 12, maxTicksLimit: 12 } },
+        y: { beginAtZero: true, grid: { color: cb.grid }, ticks: { color: cb.txt, font: { size: 10 }, maxTicksLimit: 6, callback: function (v) { return fmt(v); } } } } } });
+  });
+}
+/* Conferência: esteiras × produção total do filtro e a base Productivity Workstation × cadastro de estações */
+function estConferencia() {
+  var E = D.est || {}, c = E.conf, rows = hourRows(S.date, S.turno), total = 0, soma = 0;
+  rows.forEach(function (r) { total += r.real; });
+  (E.esteiras || []).forEach(function (e) { soma += estDados(e.id, S.date, S.turno).real; });
+  var ok = function (b) { return '<b style="color:' + (b ? 'var(--ok)' : 'var(--late)') + '">' + (b ? '✓' : '!') + '</b> '; };
+  var fora = Math.max(0, total - soma);
+  var linhas = [
+    ok(soma <= total) + 'Produção nas esteiras: <b>' + fmt(soma) + '</b> de <b>' + fmt(total) + '</b> produzidos no filtro (aba Consulta) · ' +
+      fmt(fora) + ' fora de esteira (staging, recebimento, LH…)' + (soma > total ? ' — <b>esteiras passaram do total: verificar</b>' : '')
+  ];
+  if (c) {
+    var pk = c.packingSemEsteira.filter(function (x) { return !/^RETURN/.test(x.ws); });
+    linhas.push(ok(!pk.length) + 'Estações de packing da Productivity Workstation sem esteira no cadastro (aba Workstation): ' + (pk.length ?
+      '<b>' + pk.map(function (x) { return esc(x.ws) + ' (' + fmt(x.tot) + ')'; }).join(', ') + '</b> — inclua na aba Workstation com a esteira' : '<b>nenhuma</b> (Return_P é devolução, fica fora)'));
+    var pe = c.porEsteira || {}, nomes = {}; (E.esteiras || []).forEach(function (e) { nomes[e.id] = e.nome; });
+    linhas.push('<span class="muted">Throughput do dia na Productivity Workstation: ' + Object.keys(pe).map(function (k) { return esc(nomes[k] || k) + ' ' + fmt(pe[k]); }).join(' · ') +
+      ' · packing total ' + fmt(c.totalPacking) + '</span>');
+  }
+  return '<div class="card est-conf"><div class="card-h"><h3>Conferência da base</h3><span class="muted xs">' + fmtDate(S.date) + ' · ' + (S.turno === 'ALL' ? 'todos os turnos' : S.turno) + '</span></div>' +
+    linhas.map(function (l) { return '<p>' + l + '</p>'; }).join('') + '</div>';
+}
+function estTabela(rows) {
+  return '<div class="tbl-scroll est-tbl"><table class="tbl"><thead><tr><th>Hora</th><th class="num-r">Planejado</th><th class="num-r">Real</th><th class="num-r">HC</th><th class="num-r">Gap</th><th class="num-r">%</th></tr></thead><tbody>' +
+    rows.map(function (r) {
+      var g = r.started ? r.real - r.plan : null, p = r.plan && r.started ? Math.round(r.real / r.plan * 100) : null;
+      return '<tr><td class="mono num">' + hh(r.h) + (r.live ? ' ' + badge('Em curso', 'var(--brand)') : '') + '</td><td class="num num-r">' + (r.plan ? fmt(r.plan) : '—') + '</td><td class="num num-r">' + (r.started ? fmt(r.real) : '—') + '</td><td class="num num-r">' + (r.mp ? fmt(r.mp) : '—') + '</td>' +
+        '<td class="num num-r" style="color:' + (g == null ? 'var(--muted)' : g >= 0 ? 'var(--ok)' : 'var(--late)') + '">' + (g == null || !r.plan ? '—' : (g > 0 ? '+' : '') + fmt(g)) + '</td><td class="num num-r">' + (p == null ? '—' : p + '%') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+function openEstDrill(id) {
+  var E = D.est, e = E.esteiras.filter(function (x) { return x.id === id; })[0]; if (!e) return;
+  var x = estDados(id, S.date, S.turno), at = E.atual && E.atual.estacoes ? E.atual.estacoes[id] || [] : [];
+  $('#sheetT').textContent = e.nome + ' · ' + fmtDate(S.date) + (S.turno === 'ALL' ? '' : ' · ' + S.turno);
+  $('#sheetB').innerHTML =
+    '<dl class="kv"><dt>Estações</dt><dd class="mono">' + esc(e.prefixo) + '*</dd><dt>Planejado</dt><dd>' + fmt(x.plan) + '</dd><dt>Real</dt><dd>' + fmt(x.real) + '</dd>' +
+    '<dt>HC real (logados na esteira)</dt><dd>' + (x.hc != null ? fmt(x.hc) : '—') + '</dd><dt>HC produzindo</dt><dd>' + (x.hcProd != null ? fmt(x.hcProd) : '—') + '</dd><dt>Check-ins lidos</dt><dd>' + esc(String(E.stamp || '').replace(/^Atualizado:\s*/i, '')) + '</dd></dl>' +
+    '<div class="card-h"><h3>Hora a hora</h3></div>' + estTabela(x.rows) +
+    (at.length ? '<div class="card-h"><h3>Estações (Productivity Workstation)</h3><span class="muted xs">acumulado da aba</span></div><div class="tbl-scroll"><table class="tbl"><thead><tr><th>Estação</th><th class="num-r">Pedidos</th><th class="num-r">Manpower</th></tr></thead><tbody>' +
+      at.slice().sort(function (a, b) { return b.tot - a.tot; }).map(function (s) { return '<tr><td class="mono">' + esc(s.ws) + '</td><td class="num num-r">' + fmt(s.tot) + '</td><td class="num num-r">' + fmt(s.mp) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '');
+  $('#sheet').hidden = false; $('.sheet-p').focus();
+}
+
+
 function toast(msg) { var t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { t.classList.remove('on'); }, 2600); }
 function reveal() { document.querySelectorAll('.rv:not(.in)').forEach(function (e, i) { setTimeout(function () { e.classList.add('in'); }, i * 70); }); }
 function download(name, text, type) { var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: type })); a.download = name; a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); }, 500); }
@@ -346,7 +464,6 @@ function load(force) {
     var m = D.stamp && D.stamp.match(/(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2})/);
     $('#sync').innerHTML = '<span class="dot"></span><b>Planilha ' + (m ? m[1].slice(-5) : p2(new Date(D.generatedAt).getHours()) + ':' + p2(new Date(D.generatedAt).getMinutes())) + '</b>';
     $('#heroEb').textContent = D.ledger ? 'Control Tower · histórico ativo' : 'Control Tower · só janela ao vivo';
-    $('#defs').innerHTML = defs();
     if (ds.length) render(); if (force) toast('Dados atualizados');
   }).withFailureHandler(function (e) {
     btn.classList.remove('spin'); $('#sync').innerHTML = '<span class="dot stale"></span>Sem conexão';
@@ -376,6 +493,8 @@ document.addEventListener('click', function (e) {
     case 'open': openSheet(el.dataset.id); return;
     case 'closeSheet': $('#sheet').hidden = true; return;
     case 'csv': csv(); return;
+    case 'estDrill': openEstDrill(v); return;
+    case 'estView': var pv = v.split('|'); S.estView[pv[0]] = pv[1]; renderEsteiras(); return;
   }
   S.shown = 25; render();
 });
